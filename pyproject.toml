@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.urls]
-repository = "https://github.com/TheKevJames/tools"
+repository = "https://github.com/TheKevJames/task"
 
 [project.scripts]
 task = "task.cli:cli"

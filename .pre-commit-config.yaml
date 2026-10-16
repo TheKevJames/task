@@ -1,4 +1,51 @@
+default_install_hook_types:
+  - commit-msg
+  - post-checkout
+  - post-merge
+  - post-rewrite
+  - pre-commit
+
+default_language_version:
+  python: python3.15
+
 repos:
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.6
+    hooks:
+      - id: remove-crlf
+      - id: remove-tabs
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-vcs-permalinks
+      - id: check-xml
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: trailing-whitespace
+
+# python
+      - id: check-builtin-literals
+      - id: check-docstring-first
+      - id: name-tests-test
   - repo: https://github.com/astral-sh/ty-pre-commit
     rev: v0.0.88
     hooks:
@@ -34,6 +81,14 @@ repos:
         types: [python]
         require_serial: true
         args:
+          # https://www.flake8rules.com/
+          # Restrict flake8 to plugins with no ruff equivalent; core
+          # pyflakes/pycodestyle (E/W/F) are handled by ruff.
+          # FCW: flake8-complicated-walrus
+          # I90: flake8-requirements
+          # IMR: flake8-import-restrictions
+          # N400: flake8-broken-line
+          # IMR200: Imports should only happen on module level, not locally. Covered by pylint.
           - --select=FCW,I90,IMR,N400
           - --ignore=IMR200
           - --per-file-ignores=tests/*:I900 hatch_build.py:I900
@@ -48,6 +103,17 @@ repos:
         # Allowlist packages below which are known to have no third-party typestubs.
         args:
           - uvx mypy . --python-executable .venv/bin/python --follow-imports=skip --no-error-summary --no-color-output 2>&1 | grep -E '\[import-untyped\]' | grep -vE '"(some_legacy_pkg)"' | { ! grep .; }
+  # TODO: use ruff once more refurb rules are out of preview
+  - repo: https://github.com/dosisod/refurb
+    rev: v2.3.1
+    hooks:
+      - id: refurb
+        args:
+          - --python-version
+          - '3.11'
+          - --
+          - --scripts-are-modules
+  # TODO: add more rules from https://docs.astral.sh/ruff/rules/
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.1
     hooks:
@@ -61,10 +127,17 @@ repos:
           - --preview
           - --config
           - lint.mccabe.max-complexity = 10
+          # Codes owned by flake8 plugins with no ruff equivalent; keeps
+          # RUF100 from stripping their noqa directives.
           - --config
           - lint.external = ['FCW', 'I90', 'IMR', 'N400']
           - --config
           - lint.isort.force-single-line = true
+          # D1,D203,D205,D212,D400,D401,D404,D407,D412,D413: pydocstyle opinions.
+          # E501: Line too long. Covered by ruff format.
+          # E741: Do not use variables named 'I', 'O', or 'l'.
+          # TRY003: Avoid long messages outside the exception class.
+          # TRY301: Abstract raise to an inner function.
           - --ignore
           - D1,D203,D205,D212,D400,D401,D404,D407,D412,D413,E501,E741,TRY003,TRY301
       - id: ruff-format
@@ -75,6 +148,7 @@ repos:
           - format.quote-style = 'single'
           - --config
           - format.skip-magic-trailing-comma = true
+          # Silence the isort/formatter magic-comma incompatibility warning.
           - --config
           - lint.isort.split-on-trailing-comma = false
   - repo: https://github.com/astral-sh/uv-pre-commit
@@ -83,3 +157,52 @@ repos:
       - id: uv-audit
       - id: uv-lock
       - id: uv-sync
+  - repo: https://github.com/henryiii/validate-pyproject-schema-store
+    rev: 2026.10.12
+    hooks:
+      - id: validate-pyproject
+  - repo: local
+    hooks:
+      - id: pyproject-no-unpinned-git-deps
+        name: disallow git dependencies without rev/tag
+        description: 'Disallow `[tool.uv.sources]` git dependencies unless they are pinned with a rev or tag on the same line'
+        # Flags lines that contain `git = "..."` but do NOT also contain `rev =` or `tag =`.
+        entry: '^(?!\s*#)(?=[^#]*\bgit\s*=\s*"[^"]+")(?![^#]*\b(?:rev|tag)\s*=).*$'
+        language: pygrep
+        types: [toml]
+        files: 'pyproject\.toml$'
+      - id: pyproject-no-unpinned-git-url-deps
+        name: disallow unpinned PEP 508 git URLs
+        description: 'Disallow `pkg @ git+<url>` direct references without an @<rev> pin'
+        # A pinned direct reference ends the git+ URL with `@<rev>`. This does
+        # not detect refs embedded in ssh URLs (`git+ssh://git@host/...`);
+        # prefer https direct references so the pin is unambiguous.
+        entry: '^(?!\s*#)(?=[^#]*git\+)(?![^#]*git\+[^\s"'',]+@[^\s"'',@/]+).*$'
+        language: pygrep
+        types: [toml]
+        files: 'pyproject\.toml$'
+      - id: pytest-fixtures-require-scope
+        name: ensure pytest fixture scopes are explicitly set
+        description: 'Ensure we explicitly set pytest fixture scopes'
+        entry: '@pytest\.fixture( |\n|(\(\)))'
+        language: pygrep
+        types: [python]
+
+# json
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.38.2
+    hooks:
+      - id: check-circle-ci
+      - id: check-github-workflows
+      - id: check-renovate
+        language: python
+        additional_dependencies:
+          - pyjson5==2.0.1
+
+# rst
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.10.0
+    hooks:
+      - id: rst-backticks
+      - id: rst-directive-colons
+      - id: rst-inline-touching-normal
