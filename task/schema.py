@@ -13,7 +13,6 @@ from . import timestamp
 
 OWNER_RE = re.compile(r'[A-Za-z0-9_.-]+')
 LINK_RE = re.compile(r'\S+')
-INTERVAL_RE = re.compile(r'[1-9][0-9]*[dwm]')
 # Tags and namespaces; the tag CHECK in migrations must agree.
 NAME_RE = re.compile(r'[a-z0-9][a-z0-9_.-]*')
 REF_RE = re.compile(rf'(?:(?P<namespace>{NAME_RE.pattern}):)?(?P<id>\d+)')
@@ -48,6 +47,15 @@ class Size(enum.StrEnum):
     medium = 'medium'
     large = 'large'
 
+
+class Unit(enum.StrEnum):
+    day = 'd'
+    week = 'w'
+    month = 'm'
+
+
+# The interval CHECK in migrations must agree.
+INTERVAL_RE = re.compile(rf'[1-9][0-9]*[{"".join(Unit)}]')
 
 E = TypeVar('E', bound=enum.StrEnum)
 
@@ -96,7 +104,6 @@ class Interval(pydantic.BaseModel, extra='forbid'):
     @pydantic.field_validator('raw')
     @classmethod
     def validate_raw(cls, value: str) -> str:
-        # TODO(refactor): use an enum
         if not INTERVAL_RE.fullmatch(value):
             raise TaskError(f'invalid interval: {value!r}')
         return value
@@ -105,42 +112,34 @@ class Interval(pydantic.BaseModel, extra='forbid'):
     def value(self) -> int:
         return int(self.raw[:-1])
 
+    @property
+    def unit(self) -> Unit:
+        return Unit(self.raw[-1])
+
     def __str__(self) -> str:
-        if self.raw.endswith('d'):
-            if self.value == 1:
+        if self.value != 1:
+            return f'every {self.value} {self.unit.name}s'
+
+        match self.unit:
+            case Unit.day:
                 return 'daily'
-            return f'every {self.value} days'
-
-        if self.raw.endswith('w'):
-            if self.value == 1:
+            case Unit.week:
                 return 'weekly'
-            return f'every {self.value} weeks'
-
-        if self.raw.endswith('m'):
-            if self.value == 1:
+            case Unit.month:
                 return 'monthly'
-            return f'every {self.value} months'
-
-        assert False, f'invalid interval {self.raw}'
 
     def apply(self, value: datetime.date) -> datetime.date:
-        if self.raw.endswith('d'):
-            days = self.value
-            return value + datetime.timedelta(days=days)
-
-        if self.raw.endswith('w'):
-            days = self.value * 7
-            return value + datetime.timedelta(days=days)
-
-        if self.raw.endswith('m'):
-            months = self.value
-            tyear, tmonth = divmod(value.month - 1 + months, 12)
-            year, month = value.year + tyear, tmonth + 1
-            # Clamping drifts: Jan 31 -> Feb 28 -> Mar 28.
-            day = min(value.day, calendar.monthrange(year, month)[1])
-            return datetime.date(year, month, day)
-
-        assert False, f'invalid interval {self.raw}'
+        match self.unit:
+            case Unit.day:
+                return value + datetime.timedelta(days=self.value)
+            case Unit.week:
+                return value + datetime.timedelta(weeks=self.value)
+            case Unit.month:
+                tyear, tmonth = divmod(value.month - 1 + self.value, 12)
+                year, month = value.year + tyear, tmonth + 1
+                # Clamping drifts: Jan 31 -> Feb 28 -> Mar 28.
+                day = min(value.day, calendar.monthrange(year, month)[1])
+                return datetime.date(year, month, day)
 
 
 class Details(pydantic.BaseModel, extra='forbid'):
