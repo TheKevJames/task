@@ -39,7 +39,7 @@ def test_migration_keeps_tasks_and_never_reuses_ids(
         kept = db.select(conn, ' ORDER BY id')
         db.insert(conn, added)
 
-    assert [(t.ident, t.summary, t.owner) for t in kept] == [
+    assert [(t.ident, t.summary, t.claim) for t in kept] == [
         (i, s, o)
         for i, s, o in ((1, 'x', 'bot'), (2, 'y', None))
         if i not in deleted

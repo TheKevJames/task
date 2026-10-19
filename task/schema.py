@@ -11,23 +11,49 @@ import pydantic
 
 from . import timestamp
 
-OWNER_RE = re.compile(r'[A-Za-z0-9_.-]+')
+# An actor's name, as its claims record it; the claim CHECK in migrations must
+# agree.
+CLAIM_RE = re.compile(r'[A-Za-z0-9_./-]+')
 LINK_RE = re.compile(r'\S+')
 # Tags and namespaces; the tag CHECK in migrations must agree.
 NAME_RE = re.compile(r'[a-z0-9][a-z0-9_.-]*')
 REF_RE = re.compile(rf'(?:(?P<namespace>{NAME_RE.pattern}):)?(?P<id>\d+)')
 TRIAGE = 'triage'
 DEFAULT = 'default'
+OPERATOR = 'operator'
 
 
 class TaskError(Exception):
     """A user-facing failure, reported without a traceback."""
 
 
-def check_owner(value: str) -> str:
-    if not OWNER_RE.fullmatch(value):
-        raise TaskError(f'invalid owner: {value!r}')
+def check_claim(value: str) -> str:
+    if not CLAIM_RE.fullmatch(value):
+        raise TaskError(f'invalid claim: {value!r}')
     return value
+
+
+@dataclasses.dataclass(frozen=True)
+class Actor:
+    """
+    Whoever makes a change: the operator, or an agent. An agent's name is
+    given by whatever authenticated it, never by the agent itself.
+    """
+
+    name: str
+
+    @classmethod
+    def agent(cls, name: str) -> Self:
+        if name == OPERATOR:
+            raise TaskError(f'an agent cannot be named {OPERATOR}')
+        return cls(check_claim(name))
+
+    @property
+    def is_operator(self) -> bool:
+        return self.name == OPERATOR
+
+
+OPERATOR_ACTOR = Actor(OPERATOR)
 
 
 def check_link(value: str) -> str:
@@ -168,7 +194,8 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
     namespace: str = DEFAULT
     tag: str
     description: str | None = None
-    owner: str | None = None
+    # The name of the actor holding the task's claim.
+    claim: str | None = None
     link: str | None = None
     priority: Priority | None = None
     size: Size | None = None
@@ -197,10 +224,10 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             raise TaskError('description is not stripped')
         return value or None
 
-    @pydantic.field_validator('owner')
+    @pydantic.field_validator('claim')
     @classmethod
-    def validate_owner(cls, value: str | None) -> str | None:
-        return None if value is None else check_owner(value)
+    def validate_claim(cls, value: str | None) -> str | None:
+        return None if value is None else check_claim(value)
 
     @pydantic.field_validator('link')
     @classmethod
@@ -224,8 +251,8 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             result += ' +'
         if self.priority:
             result += f' !{self.priority}'
-        if self.owner:
-            result += f' @{self.owner}'
+        if self.claim:
+            result += f' @{self.claim}'
         if self.details:
             result += f'\n\t{self.details}'
         return result
@@ -279,18 +306,16 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         shift: bool | None = None,
         description: str | None = None,
         description_append: str | None = None,
-        owner: str | None = None,
         link: str | None = None,
         priority: str | None = None,
         size: str | None = None,
-        force: bool = False,
     ) -> None:
         if description is not None and description_append is not None:
             raise TaskError(
                 '--description and --description-append are exclusive'
             )
         if namespace is not None:
-            self._move(namespace, owner)
+            self.namespace = normalize_name('namespace', namespace)
         if summary is not None:
             self.summary = summary
         if tag is not None:
@@ -299,31 +324,13 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             self.description = description.strip() or None
         if description_append is not None:
             self._append_description(description_append)
-        self._set_metadata(owner, link, priority, size, force=force)
+        self._set_metadata(link, priority, size)
         if next_ is not None or interval is not None or shift is not None:
             self._schedule(next_, interval, shift)
 
-    def _move(self, namespace: str, owner: str | None) -> None:
-        if owner is not None:
-            raise TaskError('--namespace and --owner are exclusive')
-        namespace = normalize_name('namespace', namespace)
-        if namespace != self.namespace and self.owner:
-            raise TaskError(
-                f'task {self.ref} is owned by {self.owner}: release it first'
-            )
-        self.namespace = namespace
-
     def _set_metadata(
-        self,
-        owner: str | None,
-        link: str | None,
-        priority: str | None,
-        size: str | None,
-        *,
-        force: bool,
+        self, link: str | None, priority: str | None, size: str | None
     ) -> None:
-        if owner is not None:
-            self._claim(owner, force=force)
         if link is not None:
             self.link = check_link(link)
         if priority is not None:
@@ -353,12 +360,30 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         else:
             self.description = addition
 
-    def _claim(self, owner: str, *, force: bool) -> None:
-        """Compare-and-set: only an unowned task may change hands."""
-        check_owner(owner)
-        if self.owner not in {None, owner} and not force:
-            raise TaskError(f'task {self.ident} is owned by {self.owner}')
-        self.owner = owner
+    def claim_as(self, actor: Actor, *, force: bool = False) -> None:
+        """Compare-and-set: only an unclaimed task may change hands."""
+        _check_force(actor, force)
+        if self.claim not in {None, actor.name} and not force:
+            raise TaskError(f'task {self.ref} is claimed by {self.claim}')
+        self.claim = actor.name
+
+    def release_as(self, actor: Actor, *, force: bool = False) -> None:
+        _check_force(actor, force)
+        if self.claim is None:
+            raise TaskError(f'task {self.ref} is not claimed')
+        if self.claim != actor.name and not force:
+            raise TaskError(f'task {self.ref} is claimed by {self.claim}')
+        self.claim = None
+
+    def authorize(self, actor: Actor, *, force: bool = False) -> None:
+        """
+        Before `actor` changes this task: an agent claims it, and the operator
+        may change only an unclaimed task or their own, unless forced.
+        """
+        if not actor.is_operator:
+            self.claim_as(actor, force=force)
+        elif self.claim not in {None, OPERATOR} and not force:
+            raise TaskError(f'task {self.ref} is claimed by {self.claim}')
 
     def clear(self, fields: Iterable['ClearableField']) -> None:
         for field in fields:
@@ -379,8 +404,8 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             ('ID', str(self.ref)),
             ('Tag', self.section),
         ]
-        if self.owner:
-            rows.append(('Owner', self.owner))
+        if self.claim:
+            rows.append(('Claim', self.claim))
         if self.link:
             rows.append(('Link', self.link))
         if self.priority:
@@ -422,7 +447,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             'namespace': self.namespace,
             'summary': self.summary,
             'tag': self.tag,
-            'owner': self.owner,
+            'claim': self.claim,
             'link': self.link,
             'priority': self.priority,
             'size': self.size,
@@ -446,12 +471,16 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         return f'{self.details.next_} ({status})'
 
 
+def _check_force(actor: Actor, force: bool) -> None:
+    if force and not actor.is_operator:
+        raise TaskError('only the operator may force a change')
+
+
 class ClearableField(enum.StrEnum):
     description = 'description'
     interval = 'interval'
     link = 'link'
     next = 'next'
-    owner = 'owner'
     priority = 'priority'
     shift = 'shift'
     size = 'size'
@@ -462,7 +491,6 @@ OPTIONAL_FIELDS = frozenset(
     {
         ClearableField.description,
         ClearableField.link,
-        ClearableField.owner,
         ClearableField.priority,
         ClearableField.size,
     }

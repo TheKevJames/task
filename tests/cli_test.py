@@ -9,9 +9,11 @@ from typer import testing
 
 from task import cli
 from task import db
+from task import ops
 from task import schema
 
 RUNNER = testing.CliRunner()
+AGENT = schema.Actor.agent('triage/task-1')
 pytestmark = pytest.mark.usefixtures('today')
 
 
@@ -98,6 +100,8 @@ def test_add_reports_the_new_ref() -> None:
         ('1', 'delay', '2'),
         ('1', 'done'),
         ('2', 'done'),
+        ('1', 'claim'),
+        ('next',),
     ],
 )
 def test_writes_report_the_resulting_task(
@@ -121,22 +125,71 @@ def test_writes_report_the_resulting_task(
 
 
 @pytest.mark.usefixtures('folder')
-def test_claims_are_exclusive_until_released() -> None:
-    run('namespace', 'add', 'b')
+def test_the_operator_claims_as_operator() -> None:
     run('add', 'a')
-    run('1', 'set', '--owner', 'build')
-    run('1', 'set', '--owner', 'build')
+    assert refused('1', 'release') == 'task 1 is not claimed'
+    run('1', 'claim')
+    run('1', 'claim')
+    assert listed('claim=operator')
+    run('1', 'set', '--tag', 'build')
+    run('1', 'release')
+    assert listed('claim=')
 
-    owned = 'task 1 is owned by build'
-    assert refused('1', 'set', '--owner', 'triage') == owned
-    assert refused('1', 'set', '-n', 'b') == f'{owned}: release it first'
-    assert listed('owner=build')
 
-    run('1', 'unset', 'owner')
-    assert listed('owner=')
-    run('1', 'set', '--owner', 'triage')
-    run('1', 'set', '--owner', 'bot', '--force')
-    assert listed()[0]['owner'] == 'bot'
+@pytest.mark.parametrize(
+    'args',
+    [
+        ('set', '--tag', 'build'),
+        ('set', '-n', 'b'),
+        ('unset', 'description'),
+        ('describe',),
+        ('delay', '2'),
+        ('done',),
+        ('claim',),
+        ('release',),
+    ],
+)
+def test_the_operator_forces_changes_to_others_claims(
+    folder: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    args: tuple[str, ...],
+) -> None:
+    monkeypatch.setenv('EDITOR', editor(folder, 'echo " mine" >> "$1"'))
+    run('namespace', 'add', 'b')
+    run('add', 'a', '--description', 'x')
+    ops.claim(AGENT, schema.Ref.parse('1'))
+
+    assert refused('1', *args) == f'task 1 is claimed by {AGENT.name}'
+    assert listed()[0]['claim'] == AGENT.name
+
+    after = json.loads(run('1', *args, '--force', '--json'))
+    print(f'{args} --force left {after}')
+    if args[0] == 'claim':
+        assert after['claim'] == schema.OPERATOR
+    elif args[0] == 'release':
+        assert after['claim'] is None
+    elif after is not None:
+        assert after['claim'] == AGENT.name
+
+
+@pytest.mark.usefixtures('folder')
+def test_next_shows_the_first_unclaimed_task_due() -> None:
+    assert run('next') == 'no task available\n'
+    assert json.loads(run('next', '--json')) is None
+    run('add', 'later', '--next', '2026-01-17')
+    run('add', 'claimed')
+    run('add', 'build', '--tag', 'build')
+    run('add', 'due', '--next', '2026-01-15')
+    ops.claim(AGENT, schema.Ref.parse('2'))
+
+    assert run('next') == 'build\t3: build\n'
+    due = 'triage\t4: due\n\tDue: 2026-01-15\n'
+    assert run('next', '-f', 'tag=triage') == due
+    assert run('next', '-d', '2', '-s', 'due', '-f', 'tag=triage') == due
+    assert run('next', '-d', '2', '-s', 'due', '-f', 'summary=later') == (
+        'triage\t1: later\n\tDue: 2026-01-17\n'
+    )
+    assert not listed('claim=operator')
 
 
 @pytest.mark.usefixtures('folder')
@@ -238,7 +291,7 @@ def test_monthly_recurrence_clamps_to_month_end() -> None:
 def test_invalid_filters_are_refused() -> None:
     assert refused('list', '-f', 'bogus=1') == (
         "invalid target: 'bogus'"
-        ' (use summary, namespace, tag, owner, link, priority, size, next)'
+        ' (use summary, namespace, tag, claim, link, priority, size, next)'
     )
     assert refused('due', '-f', 'tag=a,summary') == (
         "invalid filter: 'summary' (use eg. tag=a, tag!=a, tag~a, tag!~a)"
@@ -343,8 +396,9 @@ def test_list_renders_tasks() -> None:
     run('namespace', 'add', 'b')
     run('add', 'a', '--next', '2026-01-16')
     run('add', 'b', '-n', 'b', '--tag', 'build', '--description', 'd')
-    run('b:1', 'set', '--priority', 'high', '--owner', 'bot')
-    run('b:1', 'set', '--next', '2026-01-20', '--interval', '1w')
+    run('b:1', 'set', '--priority', 'high')
+    ops.claim(AGENT, schema.Ref.parse('b:1'))
+    run('b:1', 'set', '--next', '2026-01-20', '--interval', '1w', '--force')
     run('add', 'c', '--next', '2026-02-01', '--interval', '2d', '--shift')
 
     assert run('list') == (
@@ -352,14 +406,15 @@ def test_list_renders_tasks() -> None:
         '\tDue: 2026-01-16\n'
         'triage\t2: c\n'
         '\tDue: 2026-02-01, repeats every 2 days after completion\n'
-        'b > build\tb:1: b + !high @bot\n'
+        f'b > build\tb:1: b + !high @{AGENT.name}\n'
         '\tDue: 2026-01-20, repeats weekly since last deadline\n'
     )
 
 
 def test_show_renders_details(folder: pathlib.Path) -> None:
     run('namespace', 'add', 'b')
-    run('add', 'fix it', '-n', 'b', '--tag', 'build', '--owner', 'bot')
+    run('add', 'fix it', '-n', 'b', '--tag', 'build')
+    run('b:1', 'claim')
     run('b:1', 'set', '--link', 'x', '--priority', 'high', '--size', 'small')
     run('b:1', 'set', '--next', '2026-01-16', '--interval', '2w', '--shift')
     run('b:1', 'set', '--description', 'notes')
@@ -374,7 +429,7 @@ def test_show_renders_details(folder: pathlib.Path) -> None:
         'Summary:     fix it\n'
         'ID:          b:1\n'
         'Tag:         b > build\n'
-        'Owner:       bot\n'
+        'Claim:       operator\n'
         'Link:        x\n'
         'Priority:    high\n'
         'Size:        small\n'
@@ -406,14 +461,9 @@ def test_show_renders_due_status(next_: str, status: str) -> None:
     [
         (('add', ' '), "invalid summary: ' '"),
         (('1', 'set', '--summary', 'a\nb'), "invalid summary: 'a\\nb'"),
-        (('add', 'a', '--owner', 'a b'), "invalid owner: 'a b'"),
         (('add', 'a', '--link', 'a b'), "invalid link: 'a b'"),
         (('add', 'a', '--interval', '1y'), "invalid interval: '1y'"),
         (('show', 'B:1'), "invalid task id: 'B:1'"),
-        (
-            ('1', 'set', '-n', 'default', '--owner', 'bot'),
-            '--namespace and --owner are exclusive',
-        ),
         (
             ('1', 'set', '--description', 'x', '--description-append', 'y'),
             '--description and --description-append are exclusive',

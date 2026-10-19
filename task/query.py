@@ -15,7 +15,7 @@ class Target(enum.StrEnum):
     summary = 'summary'
     namespace = 'namespace'
     tag = 'tag'
-    owner = 'owner'
+    claim = 'claim'
     link = 'link'
     priority = 'priority'
     size = 'size'
@@ -29,7 +29,7 @@ COLUMNS = {
     Target.summary: 'fold(summary)',
     Target.namespace: 'namespace',
     Target.tag: 'tag',
-    Target.owner: "fold(coalesce(owner, ''))",
+    Target.claim: "fold(coalesce(claim, ''))",
     Target.link: "fold(coalesce(link, ''))",
     Target.priority: "coalesce(priority, '')",
     Target.size: "coalesce(size, '')",
@@ -124,6 +124,7 @@ def compile_(
     order: SortOrder,
     *,
     scheduled: bool = False,
+    unclaimed: bool = False,
 ) -> tuple[str, dict[str, object]]:
     """The WHERE, ORDER BY, and LIMIT clauses selecting tasks, and params."""
     clauses: list[str] = []
@@ -137,6 +138,8 @@ def compile_(
         params['target'] = target.isoformat()
     if scheduled:
         clauses.append('next IS NOT NULL')
+    if unclaimed:
+        clauses.append('claim IS NULL')
 
     sql = f' WHERE {" AND ".join(clauses)}' if clauses else ''
     sql += f' ORDER BY {ORDER_BY[order]}'
