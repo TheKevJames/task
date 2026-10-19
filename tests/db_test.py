@@ -42,6 +42,12 @@ INTERVAL = st.builds(
     st.sampled_from('dwm'),
 )
 EPOCH = '2000-01-01T00:00:00Z'
+PRIORITY_RANK = {
+    schema.Priority.high: 0,
+    schema.Priority.medium: 1,
+    schema.Priority.low: 2,
+    None: 3,
+}
 
 
 def details(
@@ -176,6 +182,9 @@ def reference_key(
     elif order == query.SortOrder.updated:
         assert task.updated
         key = (-task.updated.timestamp(),)
+    elif order == query.SortOrder.priority:
+        next_ = task.details.next_ if task.details else datetime.date.max
+        key = (PRIORITY_RANK[task.priority], task.details is None, next_)
     else:
         key = ()
     return (*key, task.ident, task.namespace)

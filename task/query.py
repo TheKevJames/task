@@ -102,6 +102,7 @@ class SortOrder(enum.StrEnum):
     tag = 'tag'
     created = 'created'
     updated = 'updated'
+    priority = 'priority'
 
 
 # Ids repeat across namespaces, so every order ends on both.
@@ -114,6 +115,11 @@ ORDER_BY = {
     ),
     SortOrder.created: 'created, id, namespace',
     SortOrder.updated: 'updated DESC, id, namespace',
+    SortOrder.priority: (
+        "CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1"
+        " WHEN 'low' THEN 2 ELSE 3 END,"
+        ' next IS NULL, next, id, namespace'
+    ),
 }
 
 
