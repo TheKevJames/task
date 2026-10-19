@@ -1,6 +1,7 @@
 import json
 import pathlib
 import subprocess
+import sys
 import sysconfig
 
 import pytest
@@ -13,6 +14,20 @@ TASK = pathlib.Path(sysconfig.get_path('scripts')) / 'task'
 def task(*args: str) -> subprocess.Popen[str]:
     return subprocess.Popen(
         [TASK, *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def as_agent(name: str, code: str) -> subprocess.Popen[str]:
+    """Run `code` with `actor` as agent `name`, as its own process."""
+    setup = (
+        'from task import ops, query, schema;'
+        f' actor = schema.Actor.agent({name!r})'
+    )
+    return subprocess.Popen(
+        [sys.executable, '-c', f'{setup}; {code}'],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -95,8 +110,31 @@ def test_concurrent_moves_lose_nothing() -> None:
 def test_concurrent_claims_have_one_winner() -> None:
     assert run('add', 'contested').returncode == 0
 
-    procs = [task('1', 'set', '--owner', f'bot{i}') for i in range(WRITERS)]
+    procs = [
+        as_agent(f'bot/{i}', "ops.claim(actor, schema.Ref.parse('1'))")
+        for i in range(WRITERS)
+    ]
     winners = [i for i, p in enumerate(procs) if p.wait() == 0]
 
     assert len(winners) == 1
-    assert listed()[0]['owner'] == f'bot{winners[0]}'
+    assert listed()[0]['claim'] == f'bot/{winners[0]}'
+
+
+@pytest.mark.usefixtures('folder')
+def test_concurrent_agents_take_distinct_next_tasks() -> None:
+    assert run('namespace', 'add', 'b').returncode == 0
+    for i in range(WRITERS):
+        namespace = ('default', 'b')[i % 2]
+        assert run('add', '-n', namespace, str(i)).returncode == 0
+
+    code = "print(ops.next_(actor, '', -1, query.SortOrder.ident).ref)"
+    procs = [as_agent(f'bot/{i}', code) for i in range(WRITERS)]
+    taken = [p.communicate()[0].strip() for p in procs]
+
+    assert sorted(taken) == sorted(refs(listed()))
+    claims = {f'{t["namespace"]}:{t["id"]}': t['claim'] for t in listed()}
+    print(f'taken {taken}, claims {claims}')
+    assert all(
+        claims[ref if ':' in ref else f'default:{ref}'] == f'bot/{i}'
+        for i, ref in enumerate(taken)
+    )

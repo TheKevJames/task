@@ -12,8 +12,12 @@ from typer import _click
 from typer import core
 
 from . import db
+from . import ops
 from . import query
 from . import schema
+
+# Whoever runs the CLI writes the files directly, so is the operator.
+ACTOR = schema.OPERATOR_ACTOR
 
 
 class SubjectGroup(core.TyperGroup):
@@ -44,7 +48,7 @@ app.add_typer(namespace_app, name='namespace', help='Manage namespaces.')
 
 @app.callback()
 def main() -> None:
-    """Simple personal task manager, shared by humans and bots."""
+    """Simple personal task manager, shared by an operator and agents."""
 
 
 Ago = Annotated[int, typer.Option('-a', '--ago')]
@@ -72,7 +76,9 @@ AddNamespace = Annotated[str, typer.Option('-n', '--namespace')]
 MoveNamespace = Annotated[
     str | None,
     typer.Option(
-        '-n', '--namespace', help='Move the task here; it gets a new id.'
+        '-n',
+        '--namespace',
+        help='Move the task here; it gets a new id, and keeps its claim.',
     ),
 ]
 Tag = Annotated[str | None, typer.Option('--tag', help='Section, eg. build')]
@@ -91,17 +97,11 @@ Interval = Annotated[
 Shift = Annotated[bool | None, typer.Option('--shift/--no-shift')]
 Description = Annotated[str | None, typer.Option('--description')]
 DescriptionAppend = Annotated[str | None, typer.Option('--description-append')]
-Owner = Annotated[
-    str | None,
-    typer.Option(
-        '--owner', help='Claim the task; fails if someone else owns it.'
-    ),
-]
 Link = Annotated[str | None, typer.Option('--link')]
 PriorityOpt = Annotated[schema.Priority | None, typer.Option('--priority')]
 SizeOpt = Annotated[schema.Size | None, typer.Option('--size')]
 Force = Annotated[
-    bool, typer.Option('--force', help='Take ownership from another owner.')
+    bool, typer.Option('--force', help='Even if someone else has claimed it.')
 ]
 
 
@@ -165,7 +165,6 @@ def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     interval: Interval = None,
     shift: Shift = None,
     description: Description = None,
-    owner: Owner = None,
     link: Link = None,
     priority: PriorityOpt = None,
     size: SizeOpt = None,
@@ -184,13 +183,11 @@ def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         interval=interval,
         shift=shift,
         description=description,
-        owner=owner,
         link=link,
         priority=priority,
         size=size,
     )
-    with db.write(task.namespace) as store:
-        db.insert(store, task)
+    ops.add(ACTOR, task)
     report(task, as_json, f'added task {task.ref}: {task.summary}')
 
 
@@ -203,16 +200,11 @@ def show(ref: Ref, as_json: AsJson = False) -> None:
 
 
 @app.command('done', rich_help_panel=SUBJECT_PANEL)
-def done(ref: Ref, ago: Ago = 0, as_json: AsJson = False) -> None:
+def done(
+    ref: Ref, ago: Ago = 0, force: Force = False, as_json: AsJson = False
+) -> None:
     """Complete a task: delete it, or advance it if it recurs."""
-    with db.write(ref.namespace) as store:
-        task = db.get(store, ref)
-        completed = task.complete(ago)
-        if completed is None:
-            db.delete(store, ref)
-        else:
-            db.update(store, completed)
-
+    task, completed = ops.done(ACTOR, ref, ago, force=force)
     if completed is None:
         report(None, as_json, f'deleted task {ref}: {task.summary}')
         return
@@ -226,12 +218,13 @@ def done(ref: Ref, ago: Ago = 0, as_json: AsJson = False) -> None:
 
 
 @app.command('delay', rich_help_panel=SUBJECT_PANEL)
-def delay(ref: Ref, days: int, as_json: AsJson = False) -> None:
+def delay(
+    ref: Ref, days: int, force: Force = False, as_json: AsJson = False
+) -> None:
     """Postpone a task by the given number of days."""
-    with db.write(ref.namespace) as store:
-        delayed = db.get(store, ref).postpone(days)
-        db.update(store, delayed)
-
+    delayed = ops.change(
+        ACTOR, ref, lambda task: task.postpone(days), force=force
+    )
     assert delayed.details, 'delayed task has no details'
     report(
         delayed,
@@ -251,7 +244,6 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     shift: Shift = None,
     description: Description = None,
     description_append: DescriptionAppend = None,
-    owner: Owner = None,
     link: Link = None,
     priority: PriorityOpt = None,
     size: SizeOpt = None,
@@ -259,11 +251,8 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     as_json: AsJson = False,
 ) -> None:
     """Edit a task's summary, namespace, section, metadata, or schedule."""
-    target = ref.namespace
-    if namespace is not None:
-        target = schema.normalize_name('namespace', namespace)
-    with db.write(ref.namespace, target) as store:
-        task = db.get(store, ref)
+
+    def edit(task: schema.Task) -> schema.Task:
         task.update(
             summary=summary,
             namespace=namespace,
@@ -273,26 +262,27 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             shift=shift,
             description=description,
             description_append=description_append,
-            owner=owner,
             link=link,
             priority=priority,
             size=size,
-            force=force,
         )
-        if task.namespace == ref.namespace:
-            db.update(store, task)
-        else:
-            db.move(store, task, ref)
+        return task
 
+    target = None
+    if namespace is not None:
+        target = schema.normalize_name('namespace', namespace)
+    task = ops.change(ACTOR, ref, edit, force=force, target=target)
     moved = task.namespace != ref.namespace
     report(task, as_json, f'moved to {task.ref}' if moved else '')
 
 
 @app.command('describe', rich_help_panel=SUBJECT_PANEL)
-def describe(ref: Ref, as_json: AsJson = False) -> None:
+def describe(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
     """Edit a task's description in $EDITOR."""
     with db.connect() as store:
-        original = db.get(store, ref).description
+        current = db.get(store, ref)
+    current.authorize(ACTOR, force=force)
+    original = current.description
 
     # The editor runs without the write lock, so other writers carry on; the
     # result is only saved if nobody else changed the description meanwhile.
@@ -307,27 +297,58 @@ def describe(ref: Ref, as_json: AsJson = False) -> None:
     finally:
         path.unlink()
 
-    with db.write(ref.namespace) as store:
-        task = db.get(store, ref)
+    def edit(task: schema.Task) -> schema.Task:
         if task.description != original:
             raise schema.TaskError(
                 f"task {ref}'s description changed while editing"
             )
         task.update(description=edited)
-        db.update(store, task)
-    report(task, as_json)
+        return task
+
+    report(ops.change(ACTOR, ref, edit, force=force), as_json)
 
 
 @app.command('unset', rich_help_panel=SUBJECT_PANEL)
 def unset(
-    ref: Ref, fields: list[schema.ClearableField], as_json: AsJson = False
+    ref: Ref,
+    fields: list[schema.ClearableField],
+    force: Force = False,
+    as_json: AsJson = False,
 ) -> None:
-    """Clear fields from a task; `unset <id> owner` releases a claim."""
-    with db.write(ref.namespace) as store:
-        task = db.get(store, ref)
+    """Clear fields from a task."""
+
+    def edit(task: schema.Task) -> schema.Task:
         task.clear(fields)
-        db.update(store, task)
-    report(task, as_json)
+        return task
+
+    report(ops.change(ACTOR, ref, edit, force=force), as_json)
+
+
+@app.command('claim', rich_help_panel=SUBJECT_PANEL)
+def claim(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
+    """Claim a task, so that no one else changes it."""
+    report(ops.claim(ACTOR, ref, force=force), as_json)
+
+
+@app.command('release', rich_help_panel=SUBJECT_PANEL)
+def release(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
+    """Release your claim on a task, or with --force anyone's."""
+    report(ops.release(ACTOR, ref, force=force), as_json)
+
+
+@app.command('next')
+def next_task(
+    days: Days = 0,
+    filter_: Filter = '',
+    sort: Sort = query.SortOrder.ident,
+    as_json: AsJson = False,
+) -> None:
+    """Show the first unclaimed task due within the given number of days."""
+    task = ops.next_(ACTOR, filter_, days, sort)
+    if as_json:
+        report(task, as_json)
+    else:
+        print(task or 'no task available')
 
 
 @namespace_app.command('list')

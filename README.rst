@@ -1,14 +1,14 @@
 task
 ====
 
-Simple personal task manager, shared by humans and bots.
+Simple personal task manager, shared by an operator and agents.
 
 Installation
 ------------
 
 .. code-block:: console
 
-    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@v7.3.0'
+    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@v8.0.0'
 
 Usage
 -----

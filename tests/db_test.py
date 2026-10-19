@@ -27,7 +27,7 @@ DESCRIPTION = st.text(
     string.ascii_letters + string.digits + string.punctuation + ' \n',
     max_size=80,
 ).map(lambda x: x.strip() or None)
-OWNER = st.none() | st.from_regex(schema.OWNER_RE, fullmatch=True)
+CLAIM = st.none() | st.from_regex(schema.CLAIM_RE, fullmatch=True)
 LINK = st.none() | st.builds(
     lambda repo, path, line: (
         f'https://github.com/TheKevJames/{repo}/blob/HEAD/{path}#L{line}'
@@ -68,7 +68,7 @@ TASK = st.builds(
     namespace=NAMESPACE,
     tag=TAG,
     description=DESCRIPTION,
-    owner=OWNER,
+    claim=CLAIM,
     link=LINK,
     priority=st.none() | st.sampled_from(schema.Priority),
     size=st.none() | st.sampled_from(schema.Size),
@@ -89,7 +89,7 @@ def query_task(today: datetime.date) -> st.SearchStrategy[schema.Task]:
         ),
         namespace=st.sampled_from([schema.DEFAULT, 'a', 'b']),
         tag=QUERY_NAME,
-        owner=st.sampled_from([None, 'a', 'A', 'b']),
+        claim=st.sampled_from([None, 'a', 'A', 'b/c']),
         link=st.sampled_from([None, 'a', 'A/b']),
         priority=st.none() | st.sampled_from(schema.Priority),
         size=st.none() | st.sampled_from(schema.Size),
@@ -104,7 +104,7 @@ FILTER_VALUE = (
 # (field, operator, value): `list -f` syntax, joined only when queried.
 FILTER = st.tuples(
     st.sampled_from(
-        ['summary', 'namespace', 'tag', 'owner', 'link', 'priority', 'size']
+        ['summary', 'namespace', 'tag', 'claim', 'link', 'priority', 'size']
     ),
     st.sampled_from(['=', '!=', '~', '!~']),
     FILTER_VALUE | FILTER_VALUE.map(str.upper),
@@ -194,6 +194,7 @@ def reference_key(
     limit=st.integers(-1, 4),
     order=st.sampled_from(query.SortOrder),
     scheduled=st.booleans(),
+    unclaimed=st.booleans(),
 )
 def test_query_matches_reference(  # pylint: disable=too-many-arguments
     today: datetime.date,
@@ -203,10 +204,13 @@ def test_query_matches_reference(  # pylint: disable=too-many-arguments
     limit: int,
     order: query.SortOrder,
     scheduled: bool,
+    unclaimed: bool,
 ) -> None:
     tasks = data.draw(st.lists(query_task(today), max_size=10))
     filter_ = ','.join(''.join(f) for f in filters)
-    clauses = query.compile_(filter_, days, limit, order, scheduled=scheduled)
+    clauses = query.compile_(
+        filter_, days, limit, order, scheduled=scheduled, unclaimed=unclaimed
+    )
     with task_folder():
         store(tasks)
         with db.connect() as conn:
@@ -219,6 +223,7 @@ def test_query_matches_reference(  # pylint: disable=too-many-arguments
         if all(reference_match(f, t) for f in filters)
         and (days < 0 or not t.details or t.details.next_ <= target)
         and (t.details or not scheduled)
+        and (t.claim is None or not unclaimed)
     ]
     expected.sort(key=lambda t: reference_key(order, t))
     if limit >= 0:
@@ -239,7 +244,7 @@ def test_query_matches_reference(  # pylint: disable=too-many-arguments
         "next = '2026-01-01', interval = '1y'",
         "next = '2026-01-01', interval = '1x1d'",
         'shift = 1',
-        "owner = 'a b'",
+        "claim = 'a b'",
         "link = 'a b'",
         "priority = 'urgent'",
         "size = 'huge'",
@@ -261,7 +266,7 @@ CONTENT = (
     'details',
     'tag',
     'description',
-    'owner',
+    'claim',
     'link',
     'priority',
     'size',
