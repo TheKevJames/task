@@ -97,22 +97,28 @@ class Filter(pydantic.BaseModel, extra='forbid'):
 
 
 class SortOrder(enum.StrEnum):
-    ident = 'id'
-    due = 'due'
-    tag = 'tag'
     created = 'created'
+    due = 'due'
+    ident = 'id'
+    priority = 'priority'
+    tag = 'tag'
     updated = 'updated'
 
 
 # Ids repeat across namespaces, so every order ends on both.
 ORDER_BY = {
-    SortOrder.ident: 'id, namespace',
+    SortOrder.created: 'created, id, namespace',
     SortOrder.due: 'next IS NOT NULL, next, id, namespace',
+    SortOrder.ident: 'id, namespace',
+    SortOrder.priority: (
+        "CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1"
+        " WHEN 'low' THEN 2 ELSE 3 END,"
+        ' next IS NULL, next, id, namespace'
+    ),
     SortOrder.tag: (
         f"namespace != '{schema.DEFAULT}', namespace,"
         f" tag != '{schema.TRIAGE}', tag, id"
     ),
-    SortOrder.created: 'created, id, namespace',
     SortOrder.updated: 'updated DESC, id, namespace',
 }
 

@@ -173,21 +173,25 @@ def test_the_operator_forces_changes_to_others_claims(
 
 
 @pytest.mark.usefixtures('folder')
-def test_next_shows_the_first_unclaimed_task_due() -> None:
+def test_next_shows_the_highest_priority_unclaimed_task_due() -> None:
     assert run('next') == 'no task available\n'
     assert json.loads(run('next', '--json')) is None
-    run('add', 'later', '--next', '2026-01-17')
-    run('add', 'claimed')
+    run('add', 'later', '--next', '2026-01-17', '--priority', 'high')
+    run('add', 'claimed', '--priority', 'high')
     run('add', 'build', '--tag', 'build')
     run('add', 'due', '--next', '2026-01-15')
+    run('add', 'low', '--priority', 'low')
     ops.Writer(AGENT).claim(schema.Ref.parse('2'))
 
-    assert run('next') == 'build\t3: build\n'
+    assert run('next') == 'triage\t5: low !low\n'
+    assert run('next', '-d', '2') == (
+        'triage\t1: later !high\n\tDue: 2026-01-17\n'
+    )
     due = 'triage\t4: due\n\tDue: 2026-01-15\n'
-    assert run('next', '-f', 'tag=triage') == due
-    assert run('next', '-d', '2', '-s', 'due', '-f', 'tag=triage') == due
-    assert run('next', '-d', '2', '-s', 'due', '-f', 'summary=later') == (
-        'triage\t1: later\n\tDue: 2026-01-17\n'
+    assert run('next', '-f', 'priority=') == due
+    assert run('next', '-s', 'id') == 'build\t3: build\n'
+    assert run('next', '-d', '2', '-s', 'due', '-f', 'priority=') == (
+        'build\t3: build\n'
     )
     assert not listed('claim=operator')
 

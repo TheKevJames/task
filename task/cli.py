@@ -369,12 +369,12 @@ def release(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
 def next_task(
     days: Days = 0,
     filter_: Filter = '',
-    sort: Sort = query.SortOrder.ident,
+    sort: Sort = query.SortOrder.priority,
     as_json: AsJson = False,
 ) -> None:
     """
-    Show the first unclaimed task due within the given number of days; an
-    agent claims it too.
+    Show the highest-priority unclaimed task due within the given number of
+    days; an agent claims it too.
     """
     task = writer().next(filter_, days, sort)
     if as_json:

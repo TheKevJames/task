@@ -8,7 +8,7 @@ Installation
 
 .. code-block:: console
 
-    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@v8.1.1'
+    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@v8.2.0'
 
 Usage
 -----
@@ -38,6 +38,6 @@ when its agents start and stop instead embeds the server, with
 ``task.cli.listen``, and its own checks as an ``ops.Guard``.
 
 An agent claims every task it creates or changes, and may change only tasks
-which are unclaimed or its own; ``next`` claims the first unclaimed match for
-it. The operator changes only unclaimed tasks or their own, unless they
-``--force`` it. See ``GLOSSARY.md`` and ``docs/adr/``.
+which are unclaimed or its own; ``next`` claims the highest-priority unclaimed
+match for it. The operator changes only unclaimed tasks or their own, unless
+they ``--force`` it. See ``GLOSSARY.md`` and ``docs/adr/``.
