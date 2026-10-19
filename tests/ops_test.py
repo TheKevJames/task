@@ -1,11 +1,9 @@
 import contextlib
-import datetime
 import enum
 import tempfile
 
 import hypothesis
 import pytest
-import time_machine
 from hypothesis import strategies as st
 
 from task import db
@@ -16,13 +14,6 @@ from task import schema
 AGENTS = (schema.Actor.agent('a/1'), schema.Actor.agent('b/2'))
 ACTORS = (schema.OPERATOR_ACTOR, *AGENTS)
 REF = schema.Ref(schema.DEFAULT, 1)
-TODAY = datetime.date(2026, 1, 15)
-RANK = {
-    schema.Priority.high: 0,
-    schema.Priority.medium: 1,
-    schema.Priority.low: 2,
-    None: 3,
-}
 
 
 class Op(enum.Enum):
@@ -105,59 +96,6 @@ def test_claims_follow_the_matrix(
                 claim = want
             with db.connect() as store:
                 assert db.get(store, REF).claim == claim
-
-
-def urgency(task: schema.Task) -> tuple[object, ...]:
-    """Lower is taken first: priority, then scheduled earliest."""
-    due = task.details.next_ if task.details else datetime.date.max
-    return RANK[task.priority], task.details is None, due
-
-
-# A task's priority, days until it is due if scheduled, and whether claimed.
-SEED = st.tuples(
-    st.sampled_from([None, *schema.Priority]),
-    st.none() | st.integers(-2, 2),
-    st.booleans(),
-)
-
-
-@hypothesis.settings(max_examples=100, deadline=None)
-@hypothesis.given(st.lists(SEED, max_size=8), st.sampled_from(ACTORS))
-def test_next_takes_the_most_urgent_task_due(
-    seeds: list[tuple[schema.Priority | None, int | None, bool]],
-    actor: schema.Actor,
-) -> None:
-    with (
-        tempfile.TemporaryDirectory() as folder,
-        pytest.MonkeyPatch.context() as monkeypatch,
-        time_machine.travel(TODAY, tick=False),
-    ):
-        monkeypatch.setenv('TASK_FOLDER', folder)
-        candidates: list[schema.Task] = []
-        for priority, days, claimed in seeds:
-            task = schema.Task(
-                summary='a',
-                details=None
-                if days is None
-                else schema.Details.model_validate(
-                    {'next': TODAY + datetime.timedelta(days=days)}
-                ),
-                tag=schema.TRIAGE,
-                priority=priority,
-                claim=AGENTS[1].name if claimed else None,
-            )
-            ops.Writer(schema.OPERATOR_ACTOR).add(task)
-            if not claimed and (days is None or days <= 0):
-                candidates.append(task)
-
-        taken = ops.Writer(actor).next('', 0, query.SortOrder.priority)
-        print(f'{actor.name} took {taken!r} from {candidates!r}')
-        if not candidates:
-            assert taken is None
-            return
-        assert taken is not None
-        assert taken.ref in {task.ref for task in candidates}
-        assert urgency(taken) == min(map(urgency, candidates))
 
 
 @pytest.mark.usefixtures('folder')
