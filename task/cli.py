@@ -1,3 +1,7 @@
+import asyncio
+import contextvars
+import functools
+import io
 import json
 import os
 import pathlib
@@ -6,18 +10,42 @@ import sys
 import tempfile
 from collections.abc import Iterable
 from typing import Annotated
+from typing import TextIO
 
 import typer
 from typer import _click
 from typer import core
 
+from . import client
 from . import db
 from . import ops
 from . import query
+from . import rules
 from . import schema
+from . import server
 
-# Whoever runs the CLI writes the files directly, so is the operator.
-ACTOR = schema.OPERATOR_ACTOR
+# Whoever runs the CLI directly writes the files, so is the operator; the
+# server runs commands for an agent as that agent, under its rules.
+WRITER = contextvars.ContextVar(
+    'WRITER', default=ops.Writer(schema.OPERATOR_ACTOR)
+)
+# Where commands print; None for stdout. The server collects each command's.
+OUTPUT: contextvars.ContextVar[TextIO | None] = contextvars.ContextVar(
+    'OUTPUT', default=None
+)
+
+
+def writer() -> ops.Writer:
+    return WRITER.get()
+
+
+def echo(value: object, file: TextIO | None = None) -> None:
+    print(value, file=file or OUTPUT.get() or sys.stdout)
+
+
+def operator_only(command: str) -> None:
+    if not writer().actor.is_operator:
+        raise schema.TaskError(f'only the operator may {command}')
 
 
 class SubjectGroup(core.TyperGroup):
@@ -112,18 +140,18 @@ SUBJECT_PANEL = 'Task commands (use as: task <id> <cmd>)'
 
 def print_tasks(tasks: Iterable[schema.Task], as_json: bool) -> None:
     if as_json:
-        print(json.dumps([t.to_json() for t in tasks], indent=2))
+        echo(json.dumps([t.to_json() for t in tasks], indent=2))
         return
     for task in tasks:
-        print(task)
+        echo(task)
 
 
 def report(task: schema.Task | None, as_json: bool, message: str = '') -> None:
     """With --json, the task as it stands after the command; else message."""
     if as_json:
-        print(json.dumps(task.to_json() if task else None, indent=2))
+        echo(json.dumps(task.to_json() if task else None, indent=2))
     elif message:
-        print(message)
+        echo(message)
 
 
 @app.command('list')
@@ -187,7 +215,7 @@ def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         priority=priority,
         size=size,
     )
-    ops.add(ACTOR, task)
+    writer().add(task)
     report(task, as_json, f'added task {task.ref}: {task.summary}')
 
 
@@ -204,7 +232,7 @@ def done(
     ref: Ref, ago: Ago = 0, force: Force = False, as_json: AsJson = False
 ) -> None:
     """Complete a task: delete it, or advance it if it recurs."""
-    task, completed = ops.done(ACTOR, ref, ago, force=force)
+    task, completed = writer().done(ref, ago, force=force)
     if completed is None:
         report(None, as_json, f'deleted task {ref}: {task.summary}')
         return
@@ -222,8 +250,8 @@ def delay(
     ref: Ref, days: int, force: Force = False, as_json: AsJson = False
 ) -> None:
     """Postpone a task by the given number of days."""
-    delayed = ops.change(
-        ACTOR, ref, lambda task: task.postpone(days), force=force
+    delayed = writer().change(
+        ops.Verb.delay, ref, lambda task: task.postpone(days), force=force
     )
     assert delayed.details, 'delayed task has no details'
     report(
@@ -271,7 +299,7 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     target = None
     if namespace is not None:
         target = schema.normalize_name('namespace', namespace)
-    task = ops.change(ACTOR, ref, edit, force=force, target=target)
+    task = writer().change(ops.Verb.set, ref, edit, force=force, target=target)
     moved = task.namespace != ref.namespace
     report(task, as_json, f'moved to {task.ref}' if moved else '')
 
@@ -279,9 +307,10 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 @app.command('describe', rich_help_panel=SUBJECT_PANEL)
 def describe(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
     """Edit a task's description in $EDITOR."""
+    operator_only('describe')
     with db.connect() as store:
         current = db.get(store, ref)
-    current.authorize(ACTOR, force=force)
+    current.authorize(writer().actor, force=force)
     original = current.description
 
     # The editor runs without the write lock, so other writers carry on; the
@@ -305,7 +334,7 @@ def describe(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
         task.update(description=edited)
         return task
 
-    report(ops.change(ACTOR, ref, edit, force=force), as_json)
+    report(writer().change(ops.Verb.describe, ref, edit, force=force), as_json)
 
 
 @app.command('unset', rich_help_panel=SUBJECT_PANEL)
@@ -321,19 +350,19 @@ def unset(
         task.clear(fields)
         return task
 
-    report(ops.change(ACTOR, ref, edit, force=force), as_json)
+    report(writer().change(ops.Verb.unset, ref, edit, force=force), as_json)
 
 
 @app.command('claim', rich_help_panel=SUBJECT_PANEL)
 def claim(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
     """Claim a task, so that no one else changes it."""
-    report(ops.claim(ACTOR, ref, force=force), as_json)
+    report(writer().claim(ref, force=force), as_json)
 
 
 @app.command('release', rich_help_panel=SUBJECT_PANEL)
 def release(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
     """Release your claim on a task, or with --force anyone's."""
-    report(ops.release(ACTOR, ref, force=force), as_json)
+    report(writer().release(ref, force=force), as_json)
 
 
 @app.command('next')
@@ -343,36 +372,97 @@ def next_task(
     sort: Sort = query.SortOrder.ident,
     as_json: AsJson = False,
 ) -> None:
-    """Show the first unclaimed task due within the given number of days."""
-    task = ops.next_(ACTOR, filter_, days, sort)
+    """
+    Show the first unclaimed task due within the given number of days; an
+    agent claims it too.
+    """
+    task = writer().next(filter_, days, sort)
     if as_json:
         report(task, as_json)
     else:
-        print(task or 'no task available')
+        echo(task or 'no task available')
 
 
 @namespace_app.command('list')
 def namespace_list() -> None:
     """List namespaces."""
     for namespace in db.namespaces():
-        print(namespace)
+        echo(namespace)
 
 
 @namespace_app.command('add')
 def namespace_add(namespace: NamespaceName) -> None:
     """Add a namespace."""
+    operator_only('namespace add')
     db.add_namespace(schema.normalize_name('namespace', namespace))
 
 
 @namespace_app.command('delete')
 def namespace_delete(namespace: NamespaceName) -> None:
     """Delete an empty namespace."""
+    operator_only('namespace delete')
     db.delete_namespace(schema.normalize_name('namespace', namespace))
 
 
+@app.command('serve')
+def serve(
+    socket: Annotated[pathlib.Path, typer.Argument()],
+    rules_file: Annotated[
+        pathlib.Path,
+        typer.Option('--rules', help="Every agent's rules, in TOML."),
+    ],
+    agent: Annotated[
+        str, typer.Option('--agent', help='The rules to apply, by agent.')
+    ],
+    name: Annotated[
+        str, typer.Option('--as', help='Who the agent is, as it claims.')
+    ],
+) -> None:
+    """Serve one agent's writes on a unix socket, under its rules."""
+    operator_only('serve')
+    rules_ = rules.load(rules_file)
+    if agent not in rules_:
+        raise schema.TaskError(f'{rules_file}: no rules for {agent}')
+    guarded = ops.Writer(schema.Actor.agent(name), rules_[agent].check)
+    asyncio.run(server.serve_forever(socket, functools.partial(run, guarded)))
+
+
+async def listen(path: pathlib.Path, writer_: ops.Writer) -> asyncio.Server:
+    """Serve commands on `path`, run as `writer_`."""
+    return await server.serve(path, functools.partial(run, writer_))
+
+
+def run(writer_: ops.Writer, argv: list[str]) -> server.Response:
+    """Run a command as `writer_`, collecting what it prints."""
+    output = io.StringIO()
+    writer_token = WRITER.set(writer_)
+    output_token = OUTPUT.set(output)
+    try:
+        code = app(argv, prog_name='task', standalone_mode=False)
+    except schema.TaskError as e:
+        return server.Response(1, output.getvalue(), str(e))
+    except _click.exceptions.ClickException as e:
+        return server.Response(
+            e.exit_code, output.getvalue(), e.format_message()
+        )
+    except typer.Abort:
+        return server.Response(1, output.getvalue(), 'aborted')
+    finally:
+        OUTPUT.reset(output_token)
+        WRITER.reset(writer_token)
+    return server.Response(
+        code if isinstance(code, int) else 0, output.getvalue()
+    )
+
+
 def cli() -> None:
+    address = os.environ.get(client.ADDRESS)
+    argv = sys.argv[1:]
+    # Help is the same everywhere, and the server only answers commands.
+    if address and argv and '--help' not in argv:
+        sys.exit(client.forward(pathlib.Path(address), argv))
     try:
         app()
     except schema.TaskError as e:
-        print(f'error: {e}', file=sys.stderr)
+        echo(f'error: {e}', file=sys.stderr)
         sys.exit(1)

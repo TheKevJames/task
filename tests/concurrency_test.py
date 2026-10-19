@@ -21,10 +21,10 @@ def task(*args: str) -> subprocess.Popen[str]:
 
 
 def as_agent(name: str, code: str) -> subprocess.Popen[str]:
-    """Run `code` with `actor` as agent `name`, as its own process."""
+    """Run `code` with `writer` as agent `name`, as its own process."""
     setup = (
         'from task import ops, query, schema;'
-        f' actor = schema.Actor.agent({name!r})'
+        f' writer = ops.Writer(schema.Actor.agent({name!r}))'
     )
     return subprocess.Popen(
         [sys.executable, '-c', f'{setup}; {code}'],
@@ -111,7 +111,7 @@ def test_concurrent_claims_have_one_winner() -> None:
     assert run('add', 'contested').returncode == 0
 
     procs = [
-        as_agent(f'bot/{i}', "ops.claim(actor, schema.Ref.parse('1'))")
+        as_agent(f'bot/{i}', "writer.claim(schema.Ref.parse('1'))")
         for i in range(WRITERS)
     ]
     winners = [i for i, p in enumerate(procs) if p.wait() == 0]
@@ -127,7 +127,7 @@ def test_concurrent_agents_take_distinct_next_tasks() -> None:
         namespace = ('default', 'b')[i % 2]
         assert run('add', '-n', namespace, str(i)).returncode == 0
 
-    code = "print(ops.next_(actor, '', -1, query.SortOrder.ident).ref)"
+    code = "print(writer.next('', -1, query.SortOrder.ident).ref)"
     procs = [as_agent(f'bot/{i}', code) for i in range(WRITERS)]
     taken = [p.communicate()[0].strip() for p in procs]
 
