@@ -30,3 +30,38 @@ jobs:
           # renovate: datasource=github-releases depName=astral-sh/uv
           version: 0.13.1
       - run: uv run --frozen pytest
+
+  tag:
+    needs: [lint, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency: tag
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: 0.13.1
+      - env:
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+        run: |
+          tag="v$(uv version --short)"
+          if git rev-parse --quiet --verify "refs/tags/${tag}" >/dev/null; then
+            echo "${tag} already exists"
+            exit 0
+          fi
+          if previous=$(git describe --tags --abbrev=0 2>/dev/null); then
+            range="${previous}..HEAD"
+          else
+            range=HEAD
+          fi
+          # whitespace, not the default strip: subjects starting with '#'
+          # would otherwise be dropped as comments.
+          { echo "${tag}"; echo; git log --format='- %s' "${range}"; } \
+            | git tag --annotate --cleanup=whitespace --file=- "${tag}"
+          git push origin "refs/tags/${tag}"
