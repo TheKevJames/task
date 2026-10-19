@@ -157,7 +157,7 @@ def test_the_operator_forces_changes_to_others_claims(
     monkeypatch.setenv('EDITOR', editor(folder, 'echo " mine" >> "$1"'))
     run('namespace', 'add', 'b')
     run('add', 'a', '--description', 'x')
-    ops.claim(AGENT, schema.Ref.parse('1'))
+    ops.Writer(AGENT).claim(schema.Ref.parse('1'))
 
     assert refused('1', *args) == f'task 1 is claimed by {AGENT.name}'
     assert listed()[0]['claim'] == AGENT.name
@@ -180,7 +180,7 @@ def test_next_shows_the_first_unclaimed_task_due() -> None:
     run('add', 'claimed')
     run('add', 'build', '--tag', 'build')
     run('add', 'due', '--next', '2026-01-15')
-    ops.claim(AGENT, schema.Ref.parse('2'))
+    ops.Writer(AGENT).claim(schema.Ref.parse('2'))
 
     assert run('next') == 'build\t3: build\n'
     due = 'triage\t4: due\n\tDue: 2026-01-15\n'
@@ -397,7 +397,7 @@ def test_list_renders_tasks() -> None:
     run('add', 'a', '--next', '2026-01-16')
     run('add', 'b', '-n', 'b', '--tag', 'build', '--description', 'd')
     run('b:1', 'set', '--priority', 'high')
-    ops.claim(AGENT, schema.Ref.parse('b:1'))
+    ops.Writer(AGENT).claim(schema.Ref.parse('b:1'))
     run('b:1', 'set', '--next', '2026-01-20', '--interval', '1w', '--force')
     run('add', 'c', '--next', '2026-02-01', '--interval', '2d', '--shift')
 

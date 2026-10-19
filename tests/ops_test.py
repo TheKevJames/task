@@ -54,15 +54,16 @@ def _claimed(claim: str | None) -> schema.TaskError:
 
 
 def apply(actor: schema.Actor, op: Op, force: bool) -> None:
+    writer = ops.Writer(actor)
     match op:
         case Op.claim:
-            ops.claim(actor, REF, force=force)
+            writer.claim(REF, force=force)
         case Op.release:
-            ops.release(actor, REF, force=force)
+            writer.release(REF, force=force)
         case Op.change:
-            ops.change(actor, REF, lambda task: task, force=force)
+            writer.change(ops.Verb.set, REF, lambda task: task, force=force)
         case Op.next if not force:
-            ops.next_(actor, '', -1, query.SortOrder.ident)
+            writer.next('', -1, query.SortOrder.ident)
 
 
 STEP = st.tuples(
@@ -80,9 +81,8 @@ def test_claims_follow_the_matrix(
         pytest.MonkeyPatch.context() as monkeypatch,
     ):
         monkeypatch.setenv('TASK_FOLDER', folder)
-        ops.add(
-            schema.OPERATOR_ACTOR,
-            schema.Task(summary='a', details=None, tag=schema.TRIAGE),
+        ops.Writer(schema.OPERATOR_ACTOR).add(
+            schema.Task(summary='a', details=None, tag=schema.TRIAGE)
         )
         claim = None
         for actor, op, force in steps:
@@ -102,7 +102,7 @@ def test_claims_follow_the_matrix(
 def test_agents_claim_what_they_add() -> None:
     for actor in ACTORS:
         task = schema.Task(summary='a', details=None, tag=schema.TRIAGE)
-        ops.add(actor, task)
+        ops.Writer(actor).add(task)
         assert task.claim == (None if actor.is_operator else actor.name)
 
 
