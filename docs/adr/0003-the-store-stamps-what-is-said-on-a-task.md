@@ -31,3 +31,5 @@ is ever updated. These replace appending to a task's description.
 - Only the operator answers questions, and each question at most once.
 - The operator can still edit the database by hand; the stamps hold against
   agents, which have no write access to it.
+- A migration may normalize how a stamp spells its actor's name (eg. to
+  lowercase), but never changes which actor it names.

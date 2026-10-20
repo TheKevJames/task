@@ -109,8 +109,14 @@ def test_agents_claim_what_they_add() -> None:
         assert task.claim == (None if actor.is_operator else actor.name)
 
 
-@pytest.mark.parametrize('name', [actors.OPERATOR, 'a b', ''])
+@pytest.mark.parametrize('name', [actors.OPERATOR, 'Operator', 'a b', ''])
 def test_agents_cannot_be_misnamed(name: str) -> None:
     with contextlib.suppress(errors.TaskError):
         actors.Actor.agent(name)
         pytest.fail(f'agent {name!r} was allowed')
+
+
+@hypothesis.given(st.from_regex(r'[A-Za-z0-9_./-]+', fullmatch=True))
+def test_agents_are_named_in_lowercase(name: str) -> None:
+    hypothesis.assume(name.lower() != actors.OPERATOR)
+    assert actors.Actor.agent(name).name == name.lower()

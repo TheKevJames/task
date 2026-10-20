@@ -105,7 +105,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
     @pydantic.field_validator('claim')
     @classmethod
     def validate_claim(cls, value: str | None) -> str | None:
-        return None if value is None else actors.check_claim(value)
+        return None if value is None else actors.normalize_claim(value)
 
     @pydantic.field_validator('link')
     @classmethod

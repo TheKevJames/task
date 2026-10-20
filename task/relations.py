@@ -58,7 +58,7 @@ class Stamped(pydantic.BaseModel, extra='forbid', frozen=True):
     @pydantic.field_validator('actor')
     @classmethod
     def validate_actor(cls, value: str) -> str:
-        return actors.check_claim(value)
+        return actors.normalize_claim(value)
 
     def stamp_json(self) -> dict[str, object]:
         return {
