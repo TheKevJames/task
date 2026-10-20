@@ -43,8 +43,7 @@ class Change:
     before: schema.Task | None
     # None when the change deletes the task.
     after: schema.Task | None
-    # Only the namespaces being written, inside their write transaction;
-    # others are read with `db.connect()`.
+    # Inside the change's write transaction.
     store: db.Store
 
 
@@ -63,29 +62,22 @@ class Writer:
     def add(self, task: schema.Task) -> None:
         if not self.actor.is_operator:
             task.claim = self.actor.name
-        with db.write(task.namespace) as store:
+        with db.write() as store:
             self.guard(Change(self.actor, Verb.add, None, task, store))
             db.insert(store, task)
 
     def change(
-        self,
-        verb: Verb,
-        ref: schema.Ref,
-        edit: Edit,
-        *,
-        force: bool = False,
-        target: str | None = None,
+        self, verb: Verb, ref: schema.Ref, edit: Edit, *, force: bool = False
     ) -> schema.Task:
         """
         Store `edit` of a task, which returns it as it should be stored;
-        moving it to another namespace, `target`, gives it a new id there.
+        moving it to another namespace gives it a new id there.
         """
-        with db.write(ref.namespace, *filter(None, [target])) as store:
+        with db.write() as store:
             before = db.get(store, ref)
             task = before.model_copy(deep=True)
             task.authorize(self.actor, force=force)
             after = edit(task)
-            assert after.namespace in store.schemas, 'moved to unlocked target'
             self.guard(Change(self.actor, verb, before, after, store))
             if after.namespace == ref.namespace:
                 db.update(store, after)
@@ -97,7 +89,7 @@ class Writer:
         self, ref: schema.Ref, ago: int, *, force: bool = False
     ) -> tuple[schema.Task, schema.Task | None]:
         """The task, and its next occurrence; None if it was deleted."""
-        with db.write(ref.namespace) as store:
+        with db.write() as store:
             before = db.get(store, ref)
             task = before.model_copy(deep=True)
             task.authorize(self.actor, force=force)
@@ -136,13 +128,8 @@ class Writer:
             with db.connect() as store:
                 return next(iter(db.select(store, *clauses)), None)
 
-        namespaces = db.namespaces()
-        if not namespaces:
-            return None
         clauses = query.compile_(filter_, days, -1, sort, unclaimed=True)
-        # Any namespace may hold the first match, so every one is locked while
-        # it is found and claimed.
-        with db.write(*namespaces) as store:
+        with db.write() as store:
             for before in db.select(store, *clauses):
                 after = before.model_copy(deep=True)
                 after.claim_as(self.actor)
@@ -158,7 +145,7 @@ class Writer:
     def _set_claim(
         self, verb: Verb, ref: schema.Ref, edit: Edit
     ) -> schema.Task:
-        with db.write(ref.namespace) as store:
+        with db.write() as store:
             before = db.get(store, ref)
             after = edit(before.model_copy(deep=True))
             self.guard(Change(self.actor, verb, before, after, store))

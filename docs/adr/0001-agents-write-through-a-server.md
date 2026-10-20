@@ -3,7 +3,7 @@
 Agents change the task list only through a server that applies their rules,
 and have no write access to `$TASK_FOLDER` at all. Any check made inside a
 process the agent itself runs (the CLI, a tool) is advice rather than a
-boundary: the agent's shell could write the SQLite databases and description
+boundary: the agent's shell could write the SQLite database and description
 files directly. The operator keeps writing the files directly, under no rules.
 
 ## Considered Options

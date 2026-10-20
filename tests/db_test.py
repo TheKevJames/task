@@ -132,7 +132,7 @@ def store(tasks: list[schema.Task]) -> None:
     namespaces = {task.namespace for task in tasks}
     for namespace in namespaces - {schema.DEFAULT}:
         db.add_namespace(namespace)
-    with db.write(schema.DEFAULT, *namespaces) as conn:
+    with db.write() as conn:
         for task in tasks:
             db.insert(conn, task)
 
@@ -245,6 +245,8 @@ def test_query_matches_reference(  # pylint: disable=too-many-arguments
     [
         "summary = ''",
         "summary = 'a' || char(10) || 'b'",
+        "namespace = 'missing'",
+        'id = 0',
         "tag = 'Triage'",
         "tag = 'a/b'",
         "tag = '-a'",
@@ -265,9 +267,7 @@ def test_query_matches_reference(  # pylint: disable=too-many-arguments
 def test_constraints_refuse_bad_data(assignment: str) -> None:
     store([schema.Task(summary='a', details=None, tag=schema.TRIAGE)])
     with db.connect() as conn, pytest.raises(sqlite3.IntegrityError):
-        conn.conn.execute(
-            f'UPDATE {conn.table(schema.DEFAULT)} SET {assignment}'
-        )
+        conn.conn.execute(f'UPDATE task SET {assignment}')
 
 
 CONTENT = (
@@ -298,11 +298,9 @@ def test_updated_bumps_only_on_change(
     with task_folder():
         store([old])
         new = old.model_copy(update={f: getattr(other, f) for f in fields})
-        with db.write(old.namespace) as conn:
+        with db.write() as conn:
             conn.conn.execute(
-                f'UPDATE {conn.table(old.namespace)}'
-                ' SET created = :t, updated = :t',
-                {'t': EPOCH},
+                'UPDATE task SET created = :t, updated = :t', {'t': EPOCH}
             )
             before = db.get(conn, old.ref)
             db.update(conn, new)
@@ -326,11 +324,15 @@ def test_move_gives_a_new_id_and_keeps_the_rest(
         target = data.draw(NAMESPACE.filter(lambda n: n != source.namespace))
         if target not in db.namespaces():
             db.add_namespace(target)
-        with db.write(source.namespace, target) as conn:
+        with db.write() as conn:
             conn.conn.execute(
-                f'UPDATE {conn.table(source.namespace)}'
-                ' SET created = :t, updated = :t WHERE id = :id',
-                {'t': EPOCH, 'id': source.ident},
+                'UPDATE task SET created = :t, updated = :t'
+                ' WHERE namespace = :namespace AND id = :id',
+                {
+                    't': EPOCH,
+                    'namespace': source.namespace,
+                    'id': source.ident,
+                },
             )
             before = db.get(conn, source)
             moved = before.model_copy()
@@ -397,41 +399,11 @@ def test_ids_are_never_reused(operations: list[tuple[str, str, int]]) -> None:
         for namespace in NAMESPACES[1:]:
             db.add_namespace(namespace)
         for operation in operations:
-            with db.write(*NAMESPACES) as conn:
+            with db.write() as conn:
                 ref = operate(conn, operation)
             assert ref not in seen
             if ref:
                 seen.add(ref)
-
-
-def test_unwritable_namespace_is_readable_only(folder: pathlib.Path) -> None:
-    store([schema.Task(summary='a', details=None, tag='a', namespace='b')])
-    directory = folder / 'b'
-    tasks_db = directory / db.DATABASE
-    directory.chmod(0o555)
-    tasks_db.chmod(0o444)
-    try:
-        with db.connect() as conn:
-            [task] = db.select(conn)
-        with (
-            db.write('b') as conn,
-            pytest.raises(sqlite3.OperationalError, match='readonly'),
-        ):
-            db.update(conn, task)
-        directory.chmod(0o755)
-        tasks_db.chmod(0o644)
-        with db.write('b') as conn:
-            conn.conn.execute('PRAGMA user_version = 1')
-        directory.chmod(0o555)
-        tasks_db.chmod(0o444)
-        with (
-            pytest.raises(schema.TaskError, match='^namespace b: '),
-            db.connect(),
-        ):
-            pass
-    finally:
-        directory.chmod(0o755)
-        tasks_db.chmod(0o644)
 
 
 def test_only_empty_namespaces_may_be_deleted(folder: pathlib.Path) -> None:
@@ -444,30 +416,20 @@ def test_only_empty_namespaces_may_be_deleted(folder: pathlib.Path) -> None:
         with pytest.raises(schema.TaskError, match=error):
             db.delete_namespace(namespace)
 
-    with db.write('b') as conn:
+    with db.write() as conn:
         db.delete(conn, schema.Ref('b', 1))
+    (folder / 'b').mkdir()
     (folder / 'b' / '9.txt').write_text('orphan')
     (folder / 'b' / '.9.txt.tmp').write_text('half written')
     db.delete_namespace('b')
     assert not (folder / 'b').exists()
 
     db.add_namespace('c')
+    (folder / 'c').mkdir()
     (folder / 'c' / 'unexpected').write_text('')
     with pytest.raises(schema.TaskError, match='^namespace c: '):
         db.delete_namespace('c')
+    assert db.namespaces() == ['c', schema.DEFAULT]
+    (folder / 'c' / 'unexpected').unlink()
+    db.delete_namespace('c')
     assert db.namespaces() == [schema.DEFAULT]
-
-
-def test_writers_touch_only_their_namespaces(folder: pathlib.Path) -> None:
-    db.add_namespace('b')
-    # eg. a sandbox granting only `b`: not even `default` may be created.
-    folder.chmod(0o555)
-    try:
-        with db.write('b') as conn:
-            db.insert(
-                conn,
-                schema.Task(summary='a', details=None, tag='a', namespace='b'),
-            )
-    finally:
-        folder.chmod(0o755)
-    assert db.namespaces() == ['b']

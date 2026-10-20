@@ -1,20 +1,16 @@
 """
-The task store: one directory per namespace under $TASK_FOLDER, each holding
-a SQLite database plus one `<id>.txt` file per description.
+The task store: one SQLite database, `$TASK_FOLDER/tasks.sqlite`, holding
+every namespace, plus one `<namespace>/<id>.txt` file per description.
 
-Namespaces are directories so that access to each may be granted separately:
-eg. a sandbox which reads every namespace but writes only its own, so a writer
-touches only the namespaces it writes. A namespace is a directory with a valid
-name holding a database; `default` is created by the first write to it, the
-rest by `add_namespace`. Ids are unique only within a namespace, so a task's
-address is its `schema.Ref`, and moving a task to another namespace gives it a
-new id there.
+`default` always exists; other namespaces are added by `add_namespace`. Ids
+are unique only within a namespace, so a task's address is its `schema.Ref`,
+and moving a task to another namespace gives it a new id there.
 
-Descriptions live beside each database as plain files so they can be edited
+Descriptions live beside the database as plain files so they can be edited
 by hand; a file's existence is the only record that a task has one. Writers
 change them while holding the write lock but before committing, so a failed
-commit can strand an orphan, which the next write to its namespace removes.
-Ids are never reused, so an orphan cannot attach itself to a different task.
+commit can strand an orphan, which the next write removes. Ids are never
+reused, so an orphan cannot attach itself to a different task.
 
 Marking a one-off task as done deletes it, with its description; recurring
 tasks advance instead. `created` and `updated` belong to the store, never to
@@ -28,18 +24,20 @@ import os
 import pathlib
 import re
 import sqlite3
+import uuid
 from collections.abc import Generator
-from collections.abc import Iterable
 
+from . import legacy
 from . import migrations
 from . import schema
 from . import timestamp
 
 BUSY_TIMEOUT = 30.0
-DATABASE = 'tasks.db'
+DATABASE = 'tasks.sqlite'
 DESCRIPTION_RE = re.compile(r'(\d+)\.txt')
 DESCRIPTION_TMP_RE = re.compile(r'\.\d+\.txt\.tmp')
 WRITABLE = (
+    'namespace',
     'id',
     'summary',
     'tag',
@@ -52,21 +50,15 @@ WRITABLE = (
     'size',
 )
 COLUMNS = (*WRITABLE, 'created', 'updated')
-# The `tasks` view, over every namespace a Store sees, adds the namespace.
-VIEW_COLUMNS = ('namespace', *COLUMNS)
+NEXT_ID = '(SELECT seq + 1 FROM namespace WHERE name = :namespace)'
 NOW = f"strftime('{timestamp.FORMAT}', 'now')"
 
 
 @dataclasses.dataclass(frozen=True)
 class Store:
-    """A connection to some namespaces, which its `tasks` view unites."""
+    """A connection to the task store."""
 
     conn: sqlite3.Connection
-    # Namespace -> the name its database is attached as.
-    schemas: dict[str, str]
-
-    def table(self, namespace: str) -> str:
-        return f'{self.schemas[namespace]}.task'
 
 
 def folder() -> pathlib.Path:
@@ -74,133 +66,131 @@ def folder() -> pathlib.Path:
 
 
 def namespaces() -> list[str]:
-    return sorted(
-        path.name
-        for path in folder().iterdir()
-        if schema.NAME_RE.fullmatch(path.name) and _exists(path.name)
-    )
+    with connect() as store:
+        rows = store.conn.execute('SELECT name FROM namespace ORDER BY name')
+        return [name for (name,) in rows]
 
 
 def add_namespace(namespace: str) -> None:
-    if _exists(namespace):
+    with write() as store:
+        added = store.conn.execute(
+            'INSERT INTO namespace (name) VALUES (?)'
+            ' ON CONFLICT DO NOTHING RETURNING name',
+            (namespace,),
+        ).fetchone()
+    if added is None:
         raise schema.TaskError(f'namespace {namespace} already exists')
-    _create(namespace)
 
 
 def delete_namespace(namespace: str) -> None:
     """Delete an empty namespace; its orphans and temporary files go too."""
     if namespace == schema.DEFAULT:
         raise schema.TaskError(f'namespace {schema.DEFAULT} cannot be deleted')
-    with write(namespace) as store:
-        query = f'SELECT 1 FROM {store.table(namespace)} LIMIT 1'
-        if store.conn.execute(query).fetchone():
+    with write() as store:
+        _require_namespace(store, namespace)
+        query = 'SELECT 1 FROM task WHERE namespace = ? LIMIT 1'
+        if store.conn.execute(query, (namespace,)).fetchone():
             raise schema.TaskError(f'namespace {namespace} is not empty')
+        store.conn.execute(
+            'DELETE FROM namespace WHERE name = ?', (namespace,)
+        )
 
-    path = _directory(namespace)
-    (path / DATABASE).unlink()
-    for file in path.iterdir():
-        if DESCRIPTION_TMP_RE.fullmatch(file.name):
-            file.unlink(missing_ok=True)
-    try:
-        path.rmdir()
-    except OSError as e:
-        raise schema.TaskError(f'namespace {namespace}: {e}') from e
+        path = _directory(namespace)
+        if not path.is_dir():
+            return
+        patterns = (DESCRIPTION_RE, DESCRIPTION_TMP_RE)
+        for file in path.iterdir():
+            if any(pattern.fullmatch(file.name) for pattern in patterns):
+                file.unlink(missing_ok=True)
+        try:
+            path.rmdir()
+        except OSError as e:
+            raise schema.TaskError(f'namespace {namespace}: {e}') from e
 
 
 @contextlib.contextmanager
 def connect() -> Generator[Store]:
-    """Every namespace, outside any transaction: statements stand alone."""
-    with _store(None, namespaces()) as store:
-        yield store
+    """The store, outside any transaction: statements stand alone."""
+    conn = _open()
+    try:
+        yield Store(conn)
+    finally:
+        conn.close()
 
 
 @contextlib.contextmanager
-def write(namespace: str, *others: str) -> Generator[Store]:
-    """Namespaces under their write locks, committed if the block succeeds."""
-    names = {namespace, *others}
-    for name in names:
-        if _exists(name):
-            continue
-        if name != schema.DEFAULT:
-            raise schema.TaskError(f'no such namespace: {name}')
-        _create(name)
-
-    # BEGIN IMMEDIATE locks every attached database, in the order attached,
-    # so taking namespaces in sorted order keeps two writers from deadlocking.
-    # Attached databases commit atomically only if `main` is a file.
-    main, *attached = sorted(names)
-    with _store(main, attached) as store, _transaction(store.conn):
+def write() -> Generator[Store]:
+    """The store under its write lock, committed if the block succeeds."""
+    with connect() as store, _transaction(store.conn):
         yield store
-        for name in store.schemas:
-            _remove_orphans(store, name)
+        _remove_orphans(store)
 
 
 def _directory(namespace: str) -> pathlib.Path:
     return folder() / namespace
 
 
-def _exists(namespace: str) -> bool:
-    return (_directory(namespace) / DATABASE).is_file()
+def _require_namespace(store: Store, namespace: str) -> None:
+    query = 'SELECT 1 FROM namespace WHERE name = ?'
+    if not store.conn.execute(query, (namespace,)).fetchone():
+        raise schema.TaskError(f'no such namespace: {namespace}')
 
 
-def _create(namespace: str) -> None:
-    _directory(namespace).mkdir(exist_ok=True)
-    _open(namespace).close()
-
-
-def _connect(database: str | pathlib.Path) -> sqlite3.Connection:
+def _connect(database: pathlib.Path) -> sqlite3.Connection:
     conn = sqlite3.connect(
         database, timeout=BUSY_TIMEOUT, isolation_level=None
     )
     conn.create_function('fold', 1, str.lower, deterministic=True)
+    conn.execute('PRAGMA foreign_keys = ON')
+    # A rollback journal keeps the database a single self-contained file
+    # between commits, which is what Syncthing backs up. WAL would not.
+    conn.execute('PRAGMA journal_mode = DELETE')
     return conn
 
 
-def _open(namespace: str) -> sqlite3.Connection:
-    """A connection to one namespace's database, migrated."""
-    conn = _connect(_directory(namespace) / DATABASE)
+def _open() -> sqlite3.Connection:
+    """A connection to the store's database, created and migrated."""
+    path = folder() / DATABASE
+    if not path.is_file():
+        _create(path)
+    conn = _connect(path)
     try:
-        # A rollback journal keeps the database a single self-contained file
-        # between commits, which is what Syncthing backs up. WAL would not.
-        conn.execute('PRAGMA journal_mode = DELETE')
         _migrate(conn)
     except (sqlite3.DatabaseError, schema.TaskError) as e:
         conn.close()
-        raise schema.TaskError(f'namespace {namespace}: {e}') from e
+        raise schema.TaskError(f'{DATABASE}: {e}') from e
     return conn
 
 
-@contextlib.contextmanager
-def _store(main: str | None, attached: Iterable[str]) -> Generator[Store]:
-    """`main` (or an in-memory database) with the rest attached."""
-    schemas: dict[str, str] = {}
-    if main is None:
-        conn = _connect(':memory:')
-    else:
-        conn = _open(main)
-        schemas[main] = 'main'
+def _create(path: pathlib.Path) -> None:
+    """
+    Build the database aside, importing any 8.x store, then link it into
+    place: of several processes creating it at once, only one wins the link,
+    and only the winner removes the 8.x databases it imported. The winner
+    links before it removes them, so a loser which fails to import one has
+    already lost.
+    """
+    tmp = path.with_name(f'.{path.name}.{uuid.uuid4().hex}.tmp')
     try:
-        for i, name in enumerate(attached):
-            _open(name).close()
-            schemas[name] = f'ns{i}'
-            conn.execute(
-                f'ATTACH DATABASE ? AS {schemas[name]}',
-                (str(_directory(name) / DATABASE),),
-            )
-        _create_view(conn, schemas)
-        yield Store(conn, schemas)
+        conn = _connect(tmp)
+        try:
+            _migrate(conn)
+            with _transaction(conn):
+                imported = legacy.import_(conn, path.parent)
+        except schema.TaskError:
+            if path.is_file():
+                return
+            raise
+        finally:
+            conn.close()
+        try:
+            path.hardlink_to(tmp)
+        except FileExistsError:
+            return
     finally:
-        conn.close()
-
-
-def _create_view(conn: sqlite3.Connection, schemas: dict[str, str]) -> None:
-    columns = ', '.join(COLUMNS)
-    # Namespace names are checked by schema.NAME_RE, so are safe to inline.
-    selects = [
-        f"SELECT '{name}' AS namespace, {columns} FROM {alias}.task"
-        for name, alias in schemas.items()
-    ] or [f'SELECT {", ".join(f"NULL AS {c}" for c in VIEW_COLUMNS)} LIMIT 0']
-    conn.execute(f'CREATE TEMP VIEW tasks AS {" UNION ALL ".join(selects)}')
+        tmp.unlink(missing_ok=True)
+    for database in imported:
+        database.unlink(missing_ok=True)
 
 
 @contextlib.contextmanager
@@ -238,7 +228,7 @@ def select(
     store: Store, clauses: str = '', params: dict[str, object] | None = None
 ) -> list[schema.Task]:
     rows = store.conn.execute(
-        f'SELECT {", ".join(VIEW_COLUMNS)} FROM tasks{clauses}', params or {}
+        f'SELECT {", ".join(COLUMNS)} FROM task{clauses}', params or {}
     )
     return [_to_task(row) for row in rows]
 
@@ -255,12 +245,15 @@ def get(store: Store, ref: schema.Ref) -> schema.Task:
 
 
 def insert(store: Store, task: schema.Task) -> None:
-    """Store a new task, assigning its id unless it already has one."""
+    """Store a new task, assigning its id."""
+    _require_namespace(store, task.namespace)
     names = ', '.join(WRITABLE)
-    values = ', '.join(f':{column}' for column in WRITABLE)
+    values = ', '.join(
+        NEXT_ID if column == 'id' else f':{column}' for column in WRITABLE
+    )
     task.ident, task.created, task.updated = store.conn.execute(
-        f'INSERT INTO {store.table(task.namespace)} ({names})'
-        f' VALUES ({values}) RETURNING id, created, updated',
+        f'INSERT INTO task ({names}) VALUES ({values})'
+        ' RETURNING id, created, updated',
         _to_row(task),
     ).fetchone()
     _write_description(task)
@@ -268,15 +261,16 @@ def insert(store: Store, task: schema.Task) -> None:
 
 def update(store: Store, task: schema.Task) -> None:
     """Store a changed task, bumping `updated` unless nothing changed."""
-    fields = [column for column in WRITABLE if column != 'id']
+    fields = [c for c in WRITABLE if c not in {'namespace', 'id'}]
     assignments = ', '.join(f'{column} = :{column}' for column in fields)
     # SET expressions all see the row as it was before this statement.
     old = ', '.join(fields)
     new = ', '.join(f':{column}' for column in fields)
     (task.updated,) = store.conn.execute(
-        f'UPDATE {store.table(task.namespace)} SET {assignments},'
+        f'UPDATE task SET {assignments},'
         f' updated = CASE WHEN :described OR ({old}) IS NOT ({new})'
-        f' THEN {NOW} ELSE updated END WHERE id = :id RETURNING updated',
+        f' THEN {NOW} ELSE updated END'
+        ' WHERE namespace = :namespace AND id = :id RETURNING updated',
         _to_row(task)
         | {'described': _read_description(task.ref) != task.description},
     ).fetchone()
@@ -289,19 +283,24 @@ def move(store: Store, task: schema.Task, source: schema.Ref) -> None:
     task.ident = None
     insert(store, task)
     (task.created,) = store.conn.execute(
-        f'UPDATE {store.table(task.namespace)} SET created = ('
-        f'  SELECT created FROM {store.table(source.namespace)}'
-        '   WHERE id = :source'
-        ') WHERE id = :id RETURNING created',
-        {'source': source.ident, 'id': task.ident},
+        'UPDATE task SET created = ('
+        '  SELECT created FROM task'
+        '   WHERE namespace = :source_namespace AND id = :source_id'
+        ') WHERE namespace = :namespace AND id = :id RETURNING created',
+        {
+            'source_namespace': source.namespace,
+            'source_id': source.ident,
+            'namespace': task.namespace,
+            'id': task.ident,
+        },
     ).fetchone()
     delete(store, source)
 
 
 def delete(store: Store, ref: schema.Ref) -> None:
     store.conn.execute(
-        f'DELETE FROM {store.table(ref.namespace)} WHERE id = :id',
-        {'id': ref.ident},
+        'DELETE FROM task WHERE namespace = :namespace AND id = :id',
+        {'namespace': ref.namespace, 'id': ref.ident},
     )
     _description_path(ref).unlink(missing_ok=True)
 
@@ -310,6 +309,7 @@ def _to_row(task: schema.Task) -> dict[str, object]:
     details = task.details
     interval = details.interval if details else None
     return {
+        'namespace': task.namespace,
         'id': task.ident,
         'summary': task.summary,
         'tag': task.tag,
@@ -324,7 +324,7 @@ def _to_row(task: schema.Task) -> dict[str, object]:
 
 
 def _to_task(row: tuple[object, ...]) -> schema.Task:
-    fields = dict(zip(VIEW_COLUMNS, row, strict=True))
+    fields = dict(zip(COLUMNS, row, strict=True))
     namespace = fields['namespace']
     ident = fields.pop('id')
     assert isinstance(namespace, str)
@@ -372,6 +372,7 @@ def _write_description(task: schema.Task) -> None:
         path.unlink(missing_ok=True)
         return
 
+    path.parent.mkdir(exist_ok=True)
     tmp = path.with_name(f'.{path.name}.tmp')
     with tmp.open('w', encoding='utf-8') as f:
         f.write(task.description)
@@ -380,14 +381,20 @@ def _write_description(task: schema.Task) -> None:
     tmp.replace(path)
 
 
-def _remove_orphans(store: Store, namespace: str) -> None:
-    idents = {
-        row[0]
-        for row in store.conn.execute(
-            f'SELECT id FROM {store.table(namespace)}'
-        )
+def _remove_orphans(store: Store) -> None:
+    idents: dict[str, set[int]] = {
+        name: set()
+        for (name,) in store.conn.execute('SELECT name FROM namespace')
     }
-    for path in _directory(namespace).iterdir():
-        match = DESCRIPTION_RE.fullmatch(path.name)
-        if match and int(match.group(1)) not in idents:
-            path.unlink(missing_ok=True)
+    for namespace, ident in store.conn.execute(
+        'SELECT namespace, id FROM task'
+    ):
+        idents[namespace].add(ident)
+    for namespace, live in idents.items():
+        directory = _directory(namespace)
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            match = DESCRIPTION_RE.fullmatch(path.name)
+            if match and int(match.group(1)) not in live:
+                path.unlink(missing_ok=True)

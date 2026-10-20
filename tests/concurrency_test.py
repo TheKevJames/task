@@ -3,6 +3,7 @@ import pathlib
 import subprocess
 import sys
 import sysconfig
+from collections.abc import Callable
 
 import pytest
 
@@ -88,7 +89,6 @@ def test_concurrent_moves_lose_nothing() -> None:
     for i in range(WRITERS):
         namespace = ('default', 'b')[i % 2]
         assert run('add', '-n', namespace, str(i)).returncode == 0
-    # Moves both ways at once, so each takes both namespaces' locks.
     added = listed()
     procs = [
         task(ref, 'set', '-n', 'b' if ref.isdigit() else 'default')
@@ -104,6 +104,30 @@ def test_concurrent_moves_lose_nothing() -> None:
         t['namespace'] == ('b', 'default')[int(str(t['summary'])) % 2]
         for t in tasks
     )
+
+
+def test_concurrent_first_writers_import_8x_once(
+    folder: pathlib.Path, legacy_namespace: Callable[..., pathlib.Path]
+) -> None:
+    legacy_namespace('default', [(1, 'old')])
+    legacy_namespace('b', [(3, 'old')])
+    procs = [
+        task('add', '-n', ('default', 'b')[i % 2], f'task {i}')
+        for i in range(WRITERS)
+    ]
+    assert all(p.wait() == 0 for p in procs)
+
+    tasks = listed()
+    assert sorted(str(t['summary']) for t in tasks) == sorted(
+        ['old', 'old', *(f'task {i}' for i in range(WRITERS))]
+    )
+    assert len(set(refs(tasks))) == WRITERS + 2
+    assert sorted(p.name for p in folder.iterdir()) == [
+        'b',
+        'default',
+        'tasks.sqlite',
+    ]
+    assert not list(folder.glob('*/tasks.db'))
 
 
 @pytest.mark.usefixtures('folder')

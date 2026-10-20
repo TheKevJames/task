@@ -422,7 +422,7 @@ def test_show_renders_details(folder: pathlib.Path) -> None:
     run('b:1', 'set', '--link', 'x', '--priority', 'high', '--size', 'small')
     run('b:1', 'set', '--next', '2026-01-16', '--interval', '2w', '--shift')
     run('b:1', 'set', '--description', 'notes')
-    conn = sqlite3.connect(folder / 'b' / db.DATABASE, isolation_level=None)
+    conn = sqlite3.connect(folder / db.DATABASE, isolation_level=None)
     conn.execute(
         'UPDATE task SET created = ?, updated = ?',
         ('2026-01-12T17:00:00Z', '2026-01-15T16:00:00Z'),
