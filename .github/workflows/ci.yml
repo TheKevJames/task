@@ -55,7 +55,9 @@ jobs:
             echo "${tag} already exists"
             exit 0
           fi
-          if previous=$(git describe --tags --abbrev=0 2>/dev/null); then
+          # Release candidates are skipped, so a release's notes cover every
+          # change since the last release, its candidates' included.
+          if previous=$(git describe --tags --abbrev=0 --exclude='*rc[0-9]*' 2>/dev/null); then
             range="${previous}..HEAD"
           else
             range=HEAD
