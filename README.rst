@@ -8,7 +8,7 @@ Installation
 
 .. code-block:: console
 
-    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@9.1.0'
+    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@9.2.0'
 
 Usage
 -----
@@ -44,6 +44,16 @@ An agent claims every task it creates or changes, and may change only tasks
 which are unclaimed or its own; ``next`` claims the highest-priority unclaimed
 match for it. The operator changes only unclaimed tasks or their own, unless
 they ``--force`` it. See ``GLOSSARY.md`` and ``docs/adr/``.
+
+The rules file may also require fields of every task an agent puts in a
+section, whichever agent it is: eg. that whatever enters ``bakery > build``
+has its priority and size, and that no agent takes them away while it is
+there:
+
+.. code-block:: toml
+
+    [sections.bakery.build]
+    require = ["priority", "size"]
 
 Conversation
 ------------
