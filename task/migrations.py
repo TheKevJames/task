@@ -2,6 +2,10 @@
 
 # Applied in order; PRAGMA user_version counts how many have run. Never edit
 # one that has shipped: append another.
+#
+# They run with foreign keys off, so that rebuilding a table (create, copy,
+# drop, rename) neither cascades into its children nor is refused by them;
+# db._migrate checks that every foreign key still holds before committing.
 MIGRATIONS = (
     # `seq` is the highest id the namespace has handed out, so that ids are
     # never reused, even once the task holding the highest is gone.
@@ -50,6 +54,50 @@ MIGRATIONS = (
     CREATE TRIGGER task_seq AFTER INSERT ON task BEGIN
         UPDATE namespace SET seq = max(seq, NEW.id)
         WHERE name = NEW.namespace;
+    END
+    """,
+    # Moving a task changes its key in place, so that its conversation follows
+    # it by ON UPDATE CASCADE.
+    """
+    CREATE TRIGGER task_seq_move AFTER UPDATE OF namespace, id ON task BEGIN
+        UPDATE namespace SET seq = max(seq, NEW.id)
+        WHERE name = NEW.namespace;
+    END
+    """,
+    # A task's conversation: who said what, and when, as the store stamped it.
+    # Answers are rows of their own, so that no row is ever updated.
+    """
+    CREATE TABLE entry (
+        id INTEGER PRIMARY KEY,
+        namespace TEXT NOT NULL,
+        task INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('comment', 'question', 'answer')),
+        question INTEGER UNIQUE REFERENCES entry (id),
+        actor TEXT NOT NULL CHECK (
+            actor != '' AND actor NOT GLOB '*[^A-Za-z0-9_./-]*'
+        ),
+        created TEXT NOT NULL
+            DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            CHECK (strftime('%Y-%m-%dT%H:%M:%SZ', created) IS created),
+        body TEXT NOT NULL CHECK (
+            body != '' AND trim(body, ' ' || char(9, 10, 13)) = body
+        ),
+        FOREIGN KEY (namespace, task) REFERENCES task (namespace, id)
+            ON DELETE CASCADE ON UPDATE CASCADE,
+        CHECK ((kind = 'answer') = (question IS NOT NULL)),
+        CHECK (kind != 'answer' OR actor = 'operator')
+    ) STRICT
+    """,
+    'CREATE INDEX entry_task ON entry (namespace, task)',
+    """
+    CREATE TRIGGER entry_answers_a_question BEFORE INSERT ON entry
+    WHEN NEW.kind = 'answer' BEGIN
+        SELECT RAISE(ABORT, 'an answer must answer a question on its task')
+        WHERE NOT EXISTS (
+            SELECT 1 FROM entry
+            WHERE id = NEW.question AND kind = 'question'
+                AND namespace = NEW.namespace AND task = NEW.task
+        );
     END
     """,
 )

@@ -1,6 +1,6 @@
 """
-Rules: what an agent may create, claim, and change. Whatever no rule grants
-is denied.
+Rules: what an agent may create, claim, change, and say on tasks. Whatever
+no rule grants is denied; only the operator answers questions.
 
 Rules judge a change by comparing the task before and after it, whichever
 command made it, so a grant means the same through every interface:
@@ -11,9 +11,10 @@ command made it, so a grant means the same through every interface:
   creates is its own by the create rule instead;
 - change: the fields an agent may change on a task it holds, the tags it may
   move one to, and whether it may mark one as done. Moving a task needs the
-  `namespace` field, and lands it in a namespace the agent may claim in.
-  `description_append` grants adding paragraphs to a description, but not
-  changing what it already says.
+  `namespace` field, and lands it in a namespace the agent may claim in;
+- comment, question: the namespaces and tags of the tasks an agent may
+  comment on, and ask the operator questions on, whoever holds them. Saying
+  something on a task neither needs nor takes a claim.
 
 In TOML, one table per agent:
 
@@ -28,9 +29,17 @@ In TOML, one table per agent:
     tags = ["triage"]
 
     [triage.change]
-    fields = ["description_append", "priority", "size"]
+    fields = ["priority", "size"]
     tags = ["build"]
     done = false
+
+    [triage.comment]
+    namespaces = ["bakery"]
+    tags = ["triage", "build"]
+
+    [triage.question]
+    namespaces = ["bakery"]
+    tags = ["triage"]
 """
 
 import dataclasses
@@ -39,6 +48,7 @@ import pathlib
 import tomllib
 from collections.abc import Mapping
 
+from . import conversations
 from . import errors
 from . import ops
 from . import schema
@@ -49,7 +59,6 @@ class Field(enum.StrEnum):
     tag = 'tag'
     summary = 'summary'
     description = 'description'
-    description_append = 'description_append'
     link = 'link'
     priority = 'priority'
     size = 'size'
@@ -99,10 +108,14 @@ class Rules:
     create: Create | None = None
     claim: Scope | None = None
     change: Change | None = None
+    comment: Scope | None = None
+    question: Scope | None = None
 
     def check(self, change: ops.Change) -> None:
         """A guard: refuses whatever these rules do not grant."""
         before, after = change.before, change.after
+        if after is not None:
+            self._check_conversation(before, after)
         if before is None:
             assert after is not None, 'a change creates or keeps a task'
             self._check_create(after)
@@ -135,6 +148,23 @@ class Rules:
             if _value(task, field) not in {None, False}:
                 raise errors.TaskError(f'you may not set {field}')
 
+    def _check_conversation(
+        self, before: schema.Task | None, after: schema.Task
+    ) -> None:
+        said = len(before.conversation.entries) if before else 0
+        added = after.conversation.entries[said:]
+        grants = (
+            (conversations.Comment, self.comment, 'comment on'),
+            (conversations.Question, self.question, 'ask questions on'),
+        )
+        for kind, scope, verb in grants:
+            if any(isinstance(entry, kind) for entry in added) and not (
+                scope and scope.holds(after)
+            ):
+                raise errors.TaskError(
+                    f'you may not {verb} tasks in {_section(after)}'
+                )
+
     def _check_claim(self, task: schema.Task) -> None:
         if self.claim is None or not self.claim.holds(task):
             raise errors.TaskError(
@@ -157,12 +187,6 @@ class Rules:
                     raise errors.TaskError(
                         f'you may not move tasks to {after.namespace}'
                     )
-            elif field is Field.description:
-                if Field.description not in granted and not (
-                    Field.description_append in granted
-                    and _appended(before.description, after.description)
-                ):
-                    raise errors.TaskError('you may not change description')
             elif field not in granted:
                 raise errors.TaskError(f'you may not change {field}')
 
@@ -190,15 +214,8 @@ def _changed(before: schema.Task, after: schema.Task) -> list[Field]:
     return [
         field
         for field in Field
-        if field is not Field.description_append
-        and _value(before, field) != _value(after, field)
+        if _value(before, field) != _value(after, field)
     ]
-
-
-def _appended(before: str | None, after: str | None) -> bool:
-    if after is None:
-        return before is None
-    return before is None or after.startswith(f'{before}\n\n')
 
 
 def parse(data: Mapping[str, object]) -> dict[str, Rules]:
@@ -287,10 +304,11 @@ def _rules(agent: str, data: object) -> Rules:
             ),
         )
         create.done()
-    if table.has('claim'):
-        claim = table.table('claim')
-        rules = dataclasses.replace(rules, claim=_scope(claim))
-        claim.done()
+    for key in ('claim', 'comment', 'question'):
+        if table.has(key):
+            scope = table.table(key)
+            rules = dataclasses.replace(rules, **{key: _scope(scope)})
+            scope.done()
     if table.has('change'):
         change = table.table('change')
         rules = dataclasses.replace(

@@ -95,7 +95,8 @@ def test_add_reports_the_new_ref() -> None:
     'args',
     [
         ('add', 'c', '-n', 'b', '--tag', 'build'),
-        ('1', 'set', '--priority', 'high', '--description-append', 'y'),
+        ('1', 'set', '--priority', 'high', '--comment', 'y'),
+        ('2', 'set', '--question', 'y', '--answer', 'Q1: z'),
         ('1', 'set', '-n', 'b'),
         ('1', 'unset', 'shift', 'description'),
         ('1', 'describe'),
@@ -115,7 +116,7 @@ def test_writes_report_the_resulting_task(
     run('namespace', 'add', 'b')
     recurring = ('--next', '2026-03-01', '--interval', '1d', '--shift')
     run('add', 'a', *recurring, '--description', 'x')
-    run('add', 'b')
+    run('add', 'b', '--question', 'q')
 
     reported = json.loads(run(*args, '--json'))
     print(f'{args} reported {reported}')
@@ -199,14 +200,6 @@ def test_next_shows_the_highest_priority_unclaimed_task_due() -> None:
 
 
 @pytest.mark.usefixtures('folder')
-def test_description_append_adds_paragraphs() -> None:
-    run('add', 'a')
-    for note in ('a', ' ', 'b\n'):
-        run('1', 'set', '--description-append', note)
-    assert listed()[0]['description'] == 'a\n\nb'
-
-
-@pytest.mark.usefixtures('folder')
 def test_due() -> None:
     run('add', 'unscheduled')
     run('add', 'later', '--next', '2999-01-01')
@@ -272,14 +265,14 @@ def test_describe_refuses_concurrent_change(
     run('add', 'a', '--description', 'x')
     # An "editor" which saves its buffer while a bot appends a note.
     task = pathlib.Path(sysconfig.get_path('scripts')) / 'task'
-    script = f'echo mine > "$1"\n"{task}" 1 set --description-append theirs'
+    script = f'echo mine > "$1"\n"{task}" 1 set --description theirs'
     monkeypatch.setenv('EDITOR', editor(folder, script))
 
     assert (
         refused('1', 'describe')
         == "task 1's description changed while editing"
     )
-    assert listed()[0]['description'] == 'x\n\ntheirs'
+    assert listed()[0]['description'] == 'theirs'
 
 
 @pytest.mark.usefixtures('folder')
@@ -297,8 +290,14 @@ def test_monthly_recurrence_clamps_to_month_end() -> None:
 def test_invalid_filters_are_refused() -> None:
     assert refused('list', '-f', 'bogus=1') == (
         "invalid target: 'bogus'"
-        ' (use summary, namespace, tag, claim, link, priority, size, next)'
+        ' (use summary, namespace, tag, claim, link, priority, size, next,'
+        ' questions)'
     )
+    for filter_ in ('questions~open', 'questions=closed', 'questions='):
+        assert refused('list', '-f', filter_) == (
+            'questions only supports open'
+            ' (use questions=open or questions!=open)'
+        )
     assert refused('due', '-f', 'tag=a,summary') == (
         "invalid filter: 'summary' (use eg. tag=a, tag!=a, tag~a, tag!~a)"
     )
@@ -470,9 +469,11 @@ def test_show_renders_due_status(next_: str, status: str) -> None:
         (('add', 'a', '--link', 'a b'), "invalid link: 'a b'"),
         (('add', 'a', '--interval', '1y'), "invalid interval: '1y'"),
         (('show', 'B:1'), "invalid task id: 'B:1'"),
+        (('1', 'set', '--comment', ' \n'), "invalid comment: ' \\n'"),
+        (('add', 'a', '--question', ''), "invalid question: ''"),
         (
-            ('1', 'set', '--description', 'x', '--description-append', 'y'),
-            '--description and --description-append are exclusive',
+            ('1', 'set', '--answer', 'yes'),
+            "invalid answer: 'yes' (use eg. Q1: yes)",
         ),
     ],
 )
