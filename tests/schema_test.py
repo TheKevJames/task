@@ -6,6 +6,7 @@ import time_machine
 from hypothesis import strategies as st
 
 from task import errors
+from task import refs
 from task import schema
 
 INTERVAL = st.builds(
@@ -65,8 +66,8 @@ def test_marking_a_fixed_recurrence_as_done_moves_past_today(
     st.integers(min_value=0),
 )
 def test_ref_roundtrips(namespace: str, ident: int) -> None:
-    ref = schema.Ref(namespace, ident)
-    assert schema.Ref.parse(str(ref)) == ref
+    ref = refs.Ref(namespace, ident)
+    assert refs.Ref.parse(str(ref)) == ref
 
 
 @hypothesis.given(st.text() | st.text(' \tAZaz09_.-'))

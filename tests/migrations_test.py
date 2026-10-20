@@ -11,6 +11,7 @@ from task import db
 from task import errors
 from task import legacy
 from task import migrations
+from task import refs
 from task import schema
 
 LegacyNamespace = Callable[..., pathlib.Path]
@@ -21,15 +22,15 @@ def test_8x_store_is_imported(
     folder: pathlib.Path, legacy_namespace: LegacyNamespace
 ) -> None:
     databases = [
-        legacy_namespace(schema.DEFAULT, [(2, 'x'), (5, 'y')]),
+        legacy_namespace(refs.DEFAULT, [(2, 'x'), (5, 'y')]),
         legacy_namespace('b', [(1, 'z')], deleted=2),
         legacy_namespace('empty', [], deleted=1),
     ]
-    (folder / schema.DEFAULT / '5.txt').write_text('notes')
+    (folder / refs.DEFAULT / '5.txt').write_text('notes')
 
     with db.write() as conn:
         imported = db.select(conn, ' ORDER BY namespace, id')
-        for namespace in (schema.DEFAULT, 'b', 'empty'):
+        for namespace in (refs.DEFAULT, 'b', 'empty'):
             db.insert(
                 conn,
                 schema.Task(
@@ -40,9 +41,9 @@ def test_8x_store_is_imported(
 
     print(imported)
     assert [(t.ref, t.summary, t.description) for t in imported] == [
-        (schema.Ref('b', 1), 'z', None),
-        (schema.Ref(schema.DEFAULT, 2), 'x', None),
-        (schema.Ref(schema.DEFAULT, 5), 'y', 'notes'),
+        (refs.Ref('b', 1), 'z', None),
+        (refs.Ref(refs.DEFAULT, 2), 'x', None),
+        (refs.Ref(refs.DEFAULT, 5), 'y', 'notes'),
     ]
     assert all(
         t.claim == 'bot'
@@ -54,15 +55,15 @@ def test_8x_store_is_imported(
     )
     # Ids carry on from each namespace's highest ever, not its highest left.
     assert [t.ref for t in added] == [
-        schema.Ref('b', 4),
-        schema.Ref(schema.DEFAULT, 6),
-        schema.Ref('empty', 2),
+        refs.Ref('b', 4),
+        refs.Ref(refs.DEFAULT, 6),
+        refs.Ref('empty', 2),
     ]
-    assert db.namespaces() == ['b', schema.DEFAULT, 'empty']
+    assert db.namespaces() == ['b', refs.DEFAULT, 'empty']
     assert not any(database.exists() for database in databases)
     assert sorted(p.name for p in folder.iterdir()) == [
         'b',
-        schema.DEFAULT,
+        refs.DEFAULT,
         'empty',
         db.DATABASE,
     ]
@@ -71,7 +72,7 @@ def test_8x_store_is_imported(
 def test_outdated_8x_store_is_refused(
     folder: pathlib.Path, legacy_namespace: LegacyNamespace
 ) -> None:
-    current = legacy_namespace(schema.DEFAULT, [(1, 'x')])
+    current = legacy_namespace(refs.DEFAULT, [(1, 'x')])
     outdated = legacy_namespace('b', [], version=legacy.VERSION - 1)
 
     message = (
@@ -83,7 +84,7 @@ def test_outdated_8x_store_is_refused(
 
     assert current.exists()
     assert outdated.exists()
-    assert sorted(p.name for p in folder.iterdir()) == ['b', schema.DEFAULT]
+    assert sorted(p.name for p in folder.iterdir()) == ['b', refs.DEFAULT]
 
 
 def said_on(conversation: conversations.Conversation) -> schema.Task:

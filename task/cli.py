@@ -22,6 +22,7 @@ from . import db
 from . import errors
 from . import ops
 from . import query
+from . import refs
 from . import rules
 from . import schema
 from . import server
@@ -59,7 +60,7 @@ class SubjectGroup(core.TyperGroup):
     """
 
     def parse_args(self, ctx: _click.Context, args: list[str]) -> list[str]:
-        if args and schema.REF_RE.fullmatch(args[0]):
+        if args and refs.REF_RE.fullmatch(args[0]):
             if len(args) == 1:
                 args = ['show', args[0]]
             else:
@@ -92,10 +93,8 @@ Sort = Annotated[query.SortOrder, typer.Option('-s', '--sort')]
 AsJson = Annotated[bool, typer.Option('--json', help='Machine-readable.')]
 
 Ref = Annotated[
-    schema.Ref,
-    typer.Argument(
-        metavar='ID', parser=schema.Ref.parse, help='[namespace:]id'
-    ),
+    refs.Ref,
+    typer.Argument(metavar='ID', parser=refs.Ref.parse, help='[namespace:]id'),
 ]
 NamespaceName = Annotated[str, typer.Argument(metavar='NAMESPACE')]
 
@@ -199,7 +198,7 @@ def due(
 @app.command('add')
 def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     summary: str,
-    namespace: AddNamespace = schema.DEFAULT,
+    namespace: AddNamespace = refs.DEFAULT,
     tag: Tag = None,
     next_: Next = None,
     interval: Interval = None,

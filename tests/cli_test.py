@@ -12,7 +12,7 @@ from task import cli
 from task import db
 from task import errors
 from task import ops
-from task import schema
+from task import refs
 
 RUNNER = testing.CliRunner()
 AGENT = actors.Actor.agent('triage/task-1')
@@ -56,7 +56,7 @@ def editor(folder: pathlib.Path, script: str) -> str:
     return str(path)
 
 
-def refs(tasks: list[dict[str, object]]) -> list[str]:
+def ids(tasks: list[dict[str, object]]) -> list[str]:
     return [
         str(t['id'])
         if t['namespace'] == 'default'
@@ -81,7 +81,7 @@ def test_set_namespace_moves_the_task() -> None:
 
     assert run('1', 'set', '-n', 'Bakery ') == 'moved to bakery:1\n'
     assert run('bakery:1', 'set', '-n', 'bakery') == ''
-    assert refs(listed()) == ['bakery:1']
+    assert ids(listed()) == ['bakery:1']
 
 
 @pytest.mark.usefixtures('folder')
@@ -123,7 +123,7 @@ def test_writes_report_the_resulting_task(
     if reported is None:
         assert refused(args[0]) == f'task {args[0]} not found'
         return
-    [ref] = refs([reported])
+    [ref] = ids([reported])
     assert json.loads(run(ref, '--json')) == reported
 
 
@@ -160,7 +160,7 @@ def test_the_operator_forces_changes_to_others_claims(
     monkeypatch.setenv('EDITOR', editor(folder, 'echo " mine" >> "$1"'))
     run('namespace', 'add', 'b')
     run('add', 'a', '--description', 'x')
-    ops.Writer(AGENT).claim(schema.Ref.parse('1'))
+    ops.Writer(AGENT).claim(refs.Ref.parse('1'))
 
     assert refused('1', *args) == f'task 1 is claimed by {AGENT.name}'
     assert listed()[0]['claim'] == AGENT.name
@@ -184,7 +184,7 @@ def test_next_shows_the_highest_priority_unclaimed_task_due() -> None:
     run('add', 'build', '--tag', 'build')
     run('add', 'due', '--next', '2026-01-15')
     run('add', 'low', '--priority', 'low')
-    ops.Writer(AGENT).claim(schema.Ref.parse('2'))
+    ops.Writer(AGENT).claim(refs.Ref.parse('2'))
 
     assert run('next') == 'triage\t5: low !low\n'
     assert run('next', '-d', '2') == (
@@ -402,7 +402,7 @@ def test_list_renders_tasks() -> None:
     run('add', 'a', '--next', '2026-01-16')
     run('add', 'b', '-n', 'b', '--tag', 'build', '--description', 'd')
     run('b:1', 'set', '--priority', 'high')
-    ops.Writer(AGENT).claim(schema.Ref.parse('b:1'))
+    ops.Writer(AGENT).claim(refs.Ref.parse('b:1'))
     run('b:1', 'set', '--next', '2026-01-20', '--interval', '1w', '--force')
     run('add', 'c', '--next', '2026-02-01', '--interval', '2d', '--shift')
 

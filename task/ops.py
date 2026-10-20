@@ -24,6 +24,7 @@ from . import conversations
 from . import db
 from . import errors
 from . import query
+from . import refs
 from . import schema
 
 Edit = Callable[[schema.Task], schema.Task]
@@ -75,7 +76,7 @@ class Writer:
             db.insert(store, task)
 
     def change(
-        self, verb: Verb, ref: schema.Ref, edit: Edit, *, force: bool = False
+        self, verb: Verb, ref: refs.Ref, edit: Edit, *, force: bool = False
     ) -> schema.Task:
         """
         Store `edit` of a task, which returns it as it should be stored;
@@ -97,7 +98,7 @@ class Writer:
         return after
 
     def done(
-        self, ref: schema.Ref, ago: int, *, force: bool = False
+        self, ref: refs.Ref, ago: int, *, force: bool = False
     ) -> tuple[schema.Task, schema.Task | None]:
         """The task, and its next occurrence; None if it was deleted."""
         with db.write() as store:
@@ -112,14 +113,14 @@ class Writer:
                 db.update(store, after)
         return task, after
 
-    def claim(self, ref: schema.Ref, *, force: bool = False) -> schema.Task:
+    def claim(self, ref: refs.Ref, *, force: bool = False) -> schema.Task:
         def edit(task: schema.Task) -> schema.Task:
             task.claim_as(self.actor, force=force)
             return task
 
         return self._set_claim(Verb.claim, ref, edit)
 
-    def release(self, ref: schema.Ref, *, force: bool = False) -> schema.Task:
+    def release(self, ref: refs.Ref, *, force: bool = False) -> schema.Task:
         def edit(task: schema.Task) -> schema.Task:
             task.release_as(self.actor, force=force)
             return task
@@ -153,9 +154,7 @@ class Writer:
                 return after
         return None
 
-    def _set_claim(
-        self, verb: Verb, ref: schema.Ref, edit: Edit
-    ) -> schema.Task:
+    def _set_claim(self, verb: Verb, ref: refs.Ref, edit: Edit) -> schema.Task:
         with db.write() as store:
             before = db.get(store, ref)
             after = edit(before.model_copy(deep=True))

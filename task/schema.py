@@ -1,5 +1,4 @@
 import calendar
-import dataclasses
 import datetime
 import enum
 import re
@@ -12,14 +11,11 @@ import pydantic
 from . import actors
 from . import conversations
 from . import errors
+from . import refs
 from . import timestamp
 
 LINK_RE = re.compile(r'\S+')
-# Tags and namespaces; their CHECKs in migrations must agree.
-NAME_RE = re.compile(r'[a-z0-9][a-z0-9_.-]*')
-REF_RE = re.compile(rf'(?:(?P<namespace>{NAME_RE.pattern}):)?(?P<id>\d+)')
 TRIAGE = 'triage'
-DEFAULT = 'default'
 
 
 def check_link(value: str) -> str:
@@ -65,29 +61,9 @@ def parse_enum(kind: type[E], value: str) -> E:
 def normalize_name(kind: str, value: str) -> str:
     """A tag or namespace: ` Foo ` -> `foo`."""
     name = value.strip().lower()
-    if not NAME_RE.fullmatch(name):
+    if not refs.NAME_RE.fullmatch(name):
         raise errors.TaskError(f'invalid {kind}: {value!r}')
     return name
-
-
-@dataclasses.dataclass(frozen=True)
-class Ref:
-    """A task's address: `<namespace>:<id>`, or a bare id in `default`."""
-
-    namespace: str
-    ident: int
-
-    @classmethod
-    def parse(cls, value: str) -> Self:
-        match = REF_RE.fullmatch(value)
-        if not match:
-            raise errors.TaskError(f'invalid task id: {value!r}')
-        return cls(match.group('namespace') or DEFAULT, int(match.group('id')))
-
-    def __str__(self) -> str:
-        if self.namespace == DEFAULT:
-            return str(self.ident)
-        return f'{self.namespace}:{self.ident}'
 
 
 class Interval(pydantic.BaseModel, extra='forbid'):
@@ -157,7 +133,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
     summary: str
     details: Details | None
     ident: int | None = None
-    namespace: str = DEFAULT
+    namespace: str = refs.DEFAULT
     tag: str
     description: str | None = None
     # The name of the actor holding the task's claim.
@@ -180,7 +156,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
     @pydantic.field_validator('namespace', 'tag')
     @classmethod
     def validate_name(cls, value: str, info: pydantic.ValidationInfo) -> str:
-        if not NAME_RE.fullmatch(value):
+        if not refs.NAME_RE.fullmatch(value):
             raise errors.TaskError(f'invalid {info.field_name}: {value!r}')
         return value
 
@@ -202,13 +178,13 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         return None if value is None else check_link(value)
 
     @property
-    def ref(self) -> Ref:
+    def ref(self) -> refs.Ref:
         assert self.ident is not None, 'task id has not been assigned'
-        return Ref(self.namespace, self.ident)
+        return refs.Ref(self.namespace, self.ident)
 
     @property
     def section(self) -> str:
-        if self.namespace == DEFAULT:
+        if self.namespace == refs.DEFAULT:
             return self.tag
         return f'{self.namespace} > {self.tag}'
 

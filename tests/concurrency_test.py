@@ -24,7 +24,7 @@ def task(*args: str) -> subprocess.Popen[str]:
 def as_agent(name: str, code: str) -> subprocess.Popen[str]:
     """Run `code` with `writer` as agent `name`, as its own process."""
     setup = (
-        'from task import actors, ops, query, schema;'
+        'from task import actors, ops, query, refs, schema;'
         f' writer = ops.Writer(actors.Actor.agent({name!r}))'
     )
     return subprocess.Popen(
@@ -135,7 +135,7 @@ def test_concurrent_claims_have_one_winner() -> None:
     assert run('add', 'contested').returncode == 0
 
     procs = [
-        as_agent(f'bot/{i}', "writer.claim(schema.Ref.parse('1'))")
+        as_agent(f'bot/{i}', "writer.claim(refs.Ref.parse('1'))")
         for i in range(WRITERS)
     ]
     winners = [i for i, p in enumerate(procs) if p.wait() == 0]

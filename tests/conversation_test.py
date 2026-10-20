@@ -21,13 +21,14 @@ from task import conversations
 from task import db
 from task import errors
 from task import ops
+from task import refs
 from task import schema
 
 RUNNER = testing.CliRunner()
 AGENTS = (actors.Actor.agent('a/1'), actors.Actor.agent('b/2'))
 AGENT = AGENTS[0]
 ACTORS = (actors.OPERATOR_ACTOR, *AGENTS)
-REF = schema.Ref(schema.DEFAULT, 1)
+REF = refs.Ref(refs.DEFAULT, 1)
 TEXT = st.text('ab \n', min_size=1, max_size=5).filter(str.strip)
 # (actor, kind, text, pick): an answer answers the pick-th open question.
 SAYING = st.tuples(
@@ -285,7 +286,7 @@ def test_show_renders_the_conversation(folder: pathlib.Path) -> None:
 @pytest.mark.usefixtures('folder')
 def test_saying_something_neither_needs_nor_takes_a_claim() -> None:
     run('add', 'a')
-    ops.Writer(AGENT).claim(schema.Ref.parse('1'))
+    ops.Writer(AGENT).claim(refs.Ref.parse('1'))
     run('1', 'set', '--comment', 'x', '--question', 'y')
     run('1', 'set', '--answer', 'Q1: z')
     assert refused('1', 'set', '--comment', 'x', '--priority', 'high') == (
@@ -403,5 +404,5 @@ def test_entry_constraints_refuse_bad_data(values: str) -> None:
     with db.connect() as conn, pytest.raises(sqlite3.IntegrityError):
         conn.conn.execute(
             'INSERT INTO entry (namespace, task, kind, question, actor, body)'
-            f" VALUES ('{schema.DEFAULT}', {values})"
+            f" VALUES ('{refs.DEFAULT}', {values})"
         )

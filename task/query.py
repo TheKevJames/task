@@ -9,6 +9,7 @@ from typing import Self
 import pydantic
 
 from . import errors
+from . import refs
 from . import schema
 
 
@@ -139,7 +140,7 @@ ORDER_BY = {
         ' next IS NULL, next, id, namespace'
     ),
     SortOrder.tag: (
-        f"namespace != '{schema.DEFAULT}', namespace,"
+        f"namespace != '{refs.DEFAULT}', namespace,"
         f" tag != '{schema.TRIAGE}', tag, id"
     ),
     SortOrder.updated: 'updated DESC, id, namespace',

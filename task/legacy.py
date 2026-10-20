@@ -8,7 +8,7 @@ import pathlib
 import sqlite3
 
 from . import errors
-from . import schema
+from . import refs
 
 DATABASE = 'tasks.db'
 # Every 8.x command leaves every namespace's database at this version.
@@ -36,7 +36,7 @@ def import_(
     databases = sorted(
         path / DATABASE
         for path in folder.iterdir()
-        if schema.NAME_RE.fullmatch(path.name) and (path / DATABASE).is_file()
+        if refs.NAME_RE.fullmatch(path.name) and (path / DATABASE).is_file()
     )
     for database in databases:
         try:
