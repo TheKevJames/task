@@ -20,6 +20,7 @@ FILTER_TEXT = st.text() | st.lists(
 TASK = st.builds(
     schema.Task,
     summary=st.text('aAbÉé ', min_size=1, max_size=4).filter(str.strip),
+    description=st.text('aAbÉé \n', max_size=6).map(str.strip),
     details=st.none(),
     tag=st.from_regex(r'[ab][ab-]{0,3}', fullmatch=True),
     claim=st.none() | st.from_regex(r'[ab/]{1,4}', fullmatch=True),
@@ -46,7 +47,16 @@ def test_filters_parse_or_are_refused(raw: str) -> None:
 @hypothesis.given(
     data=st.data(),
     field=st.sampled_from(
-        ['summary', 'namespace', 'tag', 'claim', 'link', 'priority', 'size']
+        [
+            'summary',
+            'description',
+            'namespace',
+            'tag',
+            'claim',
+            'link',
+            'priority',
+            'size',
+        ]
     ),
     match=st.sampled_from(query.Match),
     negate=st.booleans(),

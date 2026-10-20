@@ -10,11 +10,11 @@ is ever updated. These replace appending to a task's description.
 ## Considered Options
 
 - **Appending to the description**, as `--description-append` did. Rejected:
-  the description is a plain file anyone writing it may rewrite, so an agent
-  could put words in someone else's mouth, or date them as it liked; and
-  appends from two writers depend on the order they land in.
-- **Plain files beside the descriptions.** Rejected for the same reason: they
-  are edited by hand.
+  the description is unstamped text anyone changing the task may rewrite, so
+  an agent could put words in someone else's mouth, or date them as it liked;
+  and appends from two writers depend on the order they land in.
+- **Plain files beside the database.** Rejected for the same reason: they are
+  edited by hand.
 - **Triggers refusing any update or delete of an entry.** Rejected: they only
   guard against bugs in other writers, which have no reason to touch entries,
   and would get in the way of entries following their task when it moves or

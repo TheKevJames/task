@@ -1,7 +1,7 @@
 # All namespaces share one database
 
-Every namespace lives in one SQLite database, `$TASK_FOLDER/tasks.sqlite`;
-only description files stay in a directory per namespace. Rules, not
+Every namespace lives in one SQLite database, `$TASK_FOLDER/tasks.sqlite`,
+descriptions included (see ADR-0005). Rules, not
 filesystem permissions, decide which namespaces an agent may write (see
 ADR-0001), so separate databases bought nothing but the machinery to join and
 lock them.

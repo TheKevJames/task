@@ -213,7 +213,7 @@ def test_updated_bumps_only_on_change(
 def test_move_gives_a_new_id_and_keeps_the_rest(
     tasks: list[schema.Task], data: st.DataObject
 ) -> None:
-    with task_folder() as folder:
+    with task_folder():
         store(tasks)
         source = data.draw(st.sampled_from(tasks)).ref
         target = data.draw(NAMESPACE.filter(lambda n: n != source.namespace))
@@ -237,9 +237,6 @@ def test_move_gives_a_new_id_and_keeps_the_rest(
             after = db.select(conn, ' ORDER BY namespace, id')
 
         [found] = [t for t in after if t.ref == moved.ref]
-        assert not (folder / source.namespace / f'{source.ident}.txt').exists()
-        described = folder / target / f'{moved.ident}.txt'
-        assert described.exists() == (before.description is not None)
 
     others = sorted((t for t in tasks if t.ref != source), key=location)
     assert [t for t in after if t.ref != moved.ref] == others
@@ -301,7 +298,8 @@ def test_ids_are_never_reused(operations: list[tuple[str, str, int]]) -> None:
                 seen.add(ref)
 
 
-def test_only_empty_namespaces_may_be_deleted(folder: pathlib.Path) -> None:
+@pytest.mark.usefixtures('folder')
+def test_only_empty_namespaces_may_be_deleted() -> None:
     store([schema.Task(summary='a', details=None, tag='a', namespace='b')])
     for namespace, error in (
         (refs.DEFAULT, 'cannot be deleted'),
@@ -313,18 +311,5 @@ def test_only_empty_namespaces_may_be_deleted(folder: pathlib.Path) -> None:
 
     with db.write() as conn:
         db.delete(conn, refs.Ref('b', 1))
-    (folder / 'b').mkdir()
-    (folder / 'b' / '9.txt').write_text('orphan')
-    (folder / 'b' / '.9.txt.tmp').write_text('half written')
     db.delete_namespace('b')
-    assert not (folder / 'b').exists()
-
-    db.add_namespace('c')
-    (folder / 'c').mkdir()
-    (folder / 'c' / 'unexpected').write_text('')
-    with pytest.raises(errors.TaskError, match='^namespace c: '):
-        db.delete_namespace('c')
-    assert db.namespaces() == ['c', refs.DEFAULT]
-    (folder / 'c' / 'unexpected').unlink()
-    db.delete_namespace('c')
     assert db.namespaces() == [refs.DEFAULT]

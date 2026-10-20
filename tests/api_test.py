@@ -52,7 +52,16 @@ FILTER_VALUE = (
 NEXT_DATE = st.just('') | st.dates(
     datetime.date(2026, 1, 11), datetime.date(2026, 1, 21)
 ).map(datetime.date.isoformat)
-FIELDS = ['summary', 'namespace', 'tag', 'claim', 'link', 'priority', 'size']
+FIELDS = [
+    'summary',
+    'description',
+    'namespace',
+    'tag',
+    'claim',
+    'link',
+    'priority',
+    'size',
+]
 # (field, operator, value): `list -f` syntax, joined only when listed.
 FILTER = (
     st.tuples(
@@ -84,6 +93,7 @@ def task(today: datetime.date) -> st.SearchStrategy[api.Task]:
     return st.builds(
         api.Task,
         summary=st.text('aAbÉé ', min_size=1, max_size=3).filter(str.strip),
+        description=st.sampled_from([None, 'a', 'A b', 'É\nb']),
         details=details,
         namespace=st.sampled_from([refs.DEFAULT, 'a', 'b']),
         tag=NAME,

@@ -1,33 +1,26 @@
 """
 The task store: one SQLite database, `$TASK_FOLDER/tasks.sqlite`, holding
-every namespace, plus one `<namespace>/<id>.txt` file per description.
+every namespace.
 
 `default` always exists; other namespaces are added by `add_namespace`. Ids
 are unique only within a namespace, so a task's address is its `refs.Ref`,
 and moving a task to another namespace gives it a new id there.
 
-Descriptions live beside the database as plain files so they can be edited
-by hand; a file's existence is the only record that a task has one. Writers
-change them while holding the write lock but before committing, so a failed
-commit can strand an orphan, which the next write removes. Ids are never
-reused, so an orphan cannot attach itself to a different task.
-
-Marking a one-off task as done deletes it, with its description; recurring
-tasks advance instead. `created` and `updated` belong to the store, never to
-callers: every write which changes a task's row, description, or conversation
-bumps `updated`. Editing a description file by hand does not.
+Marking a one-off task as done deletes it; recurring tasks advance instead.
+`created` and `updated` belong to the store, never to callers: every write
+which changes a task's row or conversation bumps `updated`.
 """
 
 import contextlib
 import dataclasses
 import os
 import pathlib
-import re
 import sqlite3
 import uuid
 from collections.abc import Generator
 
 from . import conversations
+from . import description_files
 from . import errors
 from . import legacy
 from . import migrations
@@ -39,12 +32,11 @@ from . import timestamp
 
 BUSY_TIMEOUT = 30.0
 DATABASE = 'tasks.sqlite'
-DESCRIPTION_RE = re.compile(r'(\d+)\.txt')
-DESCRIPTION_TMP_RE = re.compile(r'\.\d+\.txt\.tmp')
 WRITABLE = (
     'namespace',
     'id',
     'summary',
+    'description',
     'tag',
     'next',
     'interval',
@@ -88,7 +80,7 @@ def add_namespace(namespace: str) -> None:
 
 
 def delete_namespace(namespace: str) -> None:
-    """Delete an empty namespace; its orphans and temporary files go too."""
+    """Delete an empty namespace."""
     if namespace == refs.DEFAULT:
         raise errors.TaskError(f'namespace {refs.DEFAULT} cannot be deleted')
     with write() as store:
@@ -99,18 +91,6 @@ def delete_namespace(namespace: str) -> None:
         store.conn.execute(
             'DELETE FROM namespace WHERE name = ?', (namespace,)
         )
-
-        path = _directory(namespace)
-        if not path.is_dir():
-            return
-        patterns = (DESCRIPTION_RE, DESCRIPTION_TMP_RE)
-        for file in path.iterdir():
-            if any(pattern.fullmatch(file.name) for pattern in patterns):
-                file.unlink(missing_ok=True)
-        try:
-            path.rmdir()
-        except OSError as e:
-            raise errors.TaskError(f'namespace {namespace}: {e}') from e
 
 
 @contextlib.contextmanager
@@ -128,11 +108,6 @@ def write() -> Generator[Store]:
     """The store under its write lock, committed if the block succeeds."""
     with connect() as store, _transaction(store.conn):
         yield store
-        _remove_orphans(store)
-
-
-def _directory(namespace: str) -> pathlib.Path:
-    return folder() / namespace
 
 
 def _require_namespace(store: Store, namespace: str) -> None:
@@ -160,7 +135,7 @@ def _open() -> sqlite3.Connection:
         _create(path)
     conn = _connect(path)
     try:
-        _migrate(conn)
+        _migrate(conn, path.parent)
     except (sqlite3.DatabaseError, errors.TaskError) as e:
         conn.close()
         raise errors.TaskError(f'{DATABASE}: {e}') from e
@@ -179,7 +154,7 @@ def _create(path: pathlib.Path) -> None:
     try:
         conn = _connect(tmp)
         try:
-            _migrate(conn)
+            _migrate(conn, path.parent)
             with _transaction(conn):
                 imported = legacy.import_(conn, path.parent)
         except errors.TaskError:
@@ -194,8 +169,7 @@ def _create(path: pathlib.Path) -> None:
             return
     finally:
         tmp.unlink(missing_ok=True)
-    for database in imported:
-        database.unlink(missing_ok=True)
+    description_files.remove(imported)
 
 
 @contextlib.contextmanager
@@ -220,16 +194,20 @@ def _version(conn: sqlite3.Connection) -> int:
     return version
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
+def _migrate(conn: sqlite3.Connection, directory: pathlib.Path) -> None:
     if _version(conn) == len(migrations.MIGRATIONS):
         return
+    stale: list[pathlib.Path] = []
     # SQLite's procedure for changing a table's schema; foreign keys can only
     # be turned off outside a transaction.
     conn.execute('PRAGMA foreign_keys = OFF')
     try:
         with _transaction(conn):
             for migration in migrations.MIGRATIONS[_version(conn) :]:
-                conn.execute(migration)
+                if isinstance(migration, str):
+                    conn.execute(migration)
+                else:
+                    stale.extend(migration(conn, directory))
             broken = conn.execute('PRAGMA foreign_key_check').fetchone()
             if broken:
                 table, rowid, parent, _ = broken
@@ -240,6 +218,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
             conn.execute(f'PRAGMA user_version = {version}')
     finally:
         conn.execute('PRAGMA foreign_keys = ON')
+    description_files.remove(stale)
 
 
 def select(
@@ -277,7 +256,6 @@ def insert(store: Store, task: schema.Task) -> None:
         ' RETURNING id, created, updated',
         _to_row(task),
     ).fetchone()
-    _write_description(task)
     _store_conversation(store, task)
     _store_relations(store, task)
 
@@ -292,17 +270,15 @@ def update(store: Store, task: schema.Task) -> None:
     new = ', '.join(f':{column}' for column in fields)
     (task.updated,) = store.conn.execute(
         f'UPDATE task SET {assignments},'
-        ' updated = CASE WHEN :described OR :conversed OR :related'
+        ' updated = CASE WHEN :conversed OR :related'
         f' OR ({old}) IS NOT ({new}) THEN {NOW} ELSE updated END'
         ' WHERE namespace = :namespace AND id = :id RETURNING updated',
         _to_row(task)
         | {
-            'described': _read_description(task.ref) != task.description,
             'conversed': conversations.unstamped(task.conversation),
             'related': related,
         },
     ).fetchone()
-    _write_description(task)
     _store_conversation(store, task)
 
 
@@ -325,7 +301,6 @@ def move(store: Store, task: schema.Task, source: refs.Ref) -> None:
         },
     ).fetchone()
     update(store, task)
-    _description_path(source).unlink(missing_ok=True)
 
 
 def _store_conversation(store: Store, task: schema.Task) -> None:
@@ -347,7 +322,6 @@ def delete(store: Store, ref: refs.Ref) -> None:
         'DELETE FROM task WHERE namespace = :namespace AND id = :id',
         {'namespace': ref.namespace, 'id': ref.ident},
     )
-    _description_path(ref).unlink(missing_ok=True)
 
 
 def _to_row(task: schema.Task) -> dict[str, object]:
@@ -357,6 +331,7 @@ def _to_row(task: schema.Task) -> dict[str, object]:
         'namespace': task.namespace,
         'id': task.ident,
         'summary': task.summary,
+        'description': task.description,
         'tag': task.tag,
         'next': details.next_.isoformat() if details else None,
         'interval': interval.raw if interval else None,
@@ -396,7 +371,6 @@ def _to_task(
         | {
             'ident': ident,
             'details': details,
-            'description': _read_description(refs.Ref(namespace, ident)),
             'conversation': said.get(
                 (namespace, ident), conversations.Conversation()
             ),
@@ -406,52 +380,3 @@ def _to_task(
             'duplicates': relation.duplicates,
         }
     )
-
-
-def _description_path(ref: refs.Ref) -> pathlib.Path:
-    return _directory(ref.namespace) / f'{ref.ident}.txt'
-
-
-def _read_description(ref: refs.Ref) -> str | None:
-    try:
-        text = _description_path(ref).read_text(encoding='utf-8')
-    except FileNotFoundError:
-        return None
-    return text.strip() or None
-
-
-def _write_description(task: schema.Task) -> None:
-    if _read_description(task.ref) == task.description:
-        return
-
-    path = _description_path(task.ref)
-    if task.description is None:
-        path.unlink(missing_ok=True)
-        return
-
-    path.parent.mkdir(exist_ok=True)
-    tmp = path.with_name(f'.{path.name}.tmp')
-    with tmp.open('w', encoding='utf-8') as f:
-        f.write(task.description)
-        f.flush()
-        os.fsync(f.fileno())
-    tmp.replace(path)
-
-
-def _remove_orphans(store: Store) -> None:
-    idents: dict[str, set[int]] = {
-        name: set()
-        for (name,) in store.conn.execute('SELECT name FROM namespace')
-    }
-    for namespace, ident in store.conn.execute(
-        'SELECT namespace, id FROM task'
-    ):
-        idents[namespace].add(ident)
-    for namespace, live in idents.items():
-        directory = _directory(namespace)
-        if not directory.is_dir():
-            continue
-        for path in directory.iterdir():
-            match = DESCRIPTION_RE.fullmatch(path.name)
-            if match and int(match.group(1)) not in live:
-                path.unlink(missing_ok=True)
