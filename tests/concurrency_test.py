@@ -111,6 +111,7 @@ def test_concurrent_first_writers_import_8x_once(
 ) -> None:
     legacy_namespace('default', [(1, 'old')])
     legacy_namespace('b', [(3, 'old')])
+    (folder / 'b' / '3.txt').write_text('notes')
     procs = [
         task('add', '-n', ('default', 'b')[i % 2], f'task {i}')
         for i in range(WRITERS)
@@ -122,12 +123,13 @@ def test_concurrent_first_writers_import_8x_once(
         ['old', 'old', *(f'task {i}' for i in range(WRITERS))]
     )
     assert len(set(refs(tasks))) == WRITERS + 2
-    assert sorted(p.name for p in folder.iterdir()) == [
-        'b',
-        'default',
-        'tasks.sqlite',
+    described = [
+        ref
+        for ref, t in zip(refs(tasks), tasks, strict=True)
+        if t['description']
     ]
-    assert not list(folder.glob('*/tasks.db'))
+    assert described == ['b:3']
+    assert [p.name for p in folder.iterdir()] == ['tasks.sqlite']
 
 
 @pytest.mark.usefixtures('folder')

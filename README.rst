@@ -8,15 +8,17 @@ Installation
 
 .. code-block:: console
 
-    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@9.3.0'
+    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@9.4.0'
 
 Usage
 -----
 
-Tasks are stored under ``$TASK_FOLDER``: every namespace in one database,
-``tasks.sqlite``, and each namespace's descriptions in a directory of its own.
-The first run of 9.x imports a store written by 8.x, so upgrade every device
-sharing ``$TASK_FOLDER`` before using any of them.
+Tasks are stored under ``$TASK_FOLDER``, every namespace in one database:
+``tasks.sqlite``. The first run of 9.x imports a store written by 8.x, and the
+first run of 9.4 moves in the description files of earlier 9.x releases, so
+upgrade every device sharing ``$TASK_FOLDER`` before using any of them. Edit
+a description with ``task 3 describe``, and find tasks by theirs with eg.
+``task list -f description~flaky``.
 
 .. code-block:: console
 
@@ -26,7 +28,7 @@ sharing ``$TASK_FOLDER`` before using any of them.
 Agents
 ------
 
-Whoever runs ``task`` directly is the operator, writing the files under no
+Whoever runs ``task`` directly is the operator, writing the database under no
 rules. An agent instead gets no write access to ``$TASK_FOLDER``, and a server
 which writes for it under its rules (see ``task/rules.py`` for their format):
 

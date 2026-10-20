@@ -1,12 +1,14 @@
 """
 Importing a store written by task 8.x, which kept each namespace in its own
-database, `$TASK_FOLDER/<namespace>/tasks.db`, beside its descriptions.
+database, `$TASK_FOLDER/<namespace>/tasks.db`, beside its description files.
+Dropping it also drops migrations.MIGRATIONS' description_files.migrate.
 """
 
 import contextlib
 import pathlib
 import sqlite3
 
+from . import description_files
 from . import errors
 from . import refs
 
@@ -36,19 +38,26 @@ SELECTED = ', '.join(
 def import_(
     conn: sqlite3.Connection, folder: pathlib.Path
 ) -> list[pathlib.Path]:
-    """Copy each 8.x namespace in `folder` into `conn`; their databases."""
+    """
+    Copy each 8.x namespace in `folder` into `conn`; the files left stale:
+    their databases and description files.
+    """
     databases = sorted(
         path / DATABASE
         for path in folder.iterdir()
         if refs.NAME_RE.fullmatch(path.name) and (path / DATABASE).is_file()
     )
+    stale = databases.copy()
     for database in databases:
+        name = database.parent.name
         try:
             _import(conn, database)
+            stale.extend(
+                description_files.import_(conn, name, database.parent)
+            )
         except sqlite3.DatabaseError as e:
-            name = database.parent.name
             raise errors.TaskError(f'namespace {name}: {e}') from e
-    return databases
+    return stale
 
 
 def _import(conn: sqlite3.Connection, database: pathlib.Path) -> None:

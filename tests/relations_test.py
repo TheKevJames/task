@@ -388,3 +388,23 @@ def test_guards_judge_what_relations_do() -> None:
 
     assert seen == [(ops.Verb.done, None), (ops.Verb.settle, 'triage')]
     assert listed('blocked=any') == ['1', '2']
+
+
+@pytest.mark.usefixtures('folder')
+def test_rejected_follow_ons_leave_the_description_unchanged() -> None:
+    run('add', 'target', '--description', 'before')
+    run('add', 'waiting', '--blocked-by', '1:decided')
+
+    def guard(change: ops.Change) -> None:
+        if change.verb is ops.Verb.settle:
+            raise errors.TaskError('not now')
+
+    def edit(task: schema.Task) -> schema.Task:
+        task.update(tag='build', description='after')
+        return task
+
+    writer = ops.Writer(actors.OPERATOR_ACTOR, guard)
+    with pytest.raises(errors.TaskError, match='not now'):
+        writer.change(ops.Verb.set, refs.Ref.parse('1'), edit)
+
+    assert show('1')['description'] == 'before'

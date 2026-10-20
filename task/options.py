@@ -13,7 +13,9 @@ Days = Annotated[int, typer.Option('-d', '--days')]
 Filter = Annotated[
     str,
     typer.Option(
-        '-f', '--filter', help='namespace=foo,tag=bar,summary!~bq,link^=https:'
+        '-f',
+        '--filter',
+        help='namespace=foo,tag=bar,summary!~bq,description~x,link^=https:',
     ),
 ]
 Limit = Annotated[int, typer.Option('-l', '--limit')]

@@ -1,12 +1,24 @@
 """The schema of the task store's database, as the migrations building it."""
 
+import pathlib
+import sqlite3
+from collections.abc import Callable
+
+from . import description_files
+
+# A function migration gets the connection and the store's folder, and
+# returns the files to delete once its migrations commit.
+Migration = (
+    str | Callable[[sqlite3.Connection, pathlib.Path], list[pathlib.Path]]
+)
+
 # Applied in order; PRAGMA user_version counts how many have run. Never edit
 # one that has shipped: append another.
 #
 # They run with foreign keys off, so that rebuilding a table (create, copy,
 # drop, rename) neither cascades into its children nor is refused by them;
 # db._migrate checks that every foreign key still holds before committing.
-MIGRATIONS = (
+MIGRATIONS: tuple[Migration, ...] = (
     # `seq` is the highest id the namespace has handed out, so that ids are
     # never reused, even once the task holding the highest is gone.
     """
@@ -299,4 +311,16 @@ MIGRATIONS = (
     CREATE UNIQUE INDEX blocker_one_canonical ON blocker (namespace, task)
     WHERE kind = 'duplicate'
     """,
+    # Descriptions move in from the files beside the database.
+    """
+    ALTER TABLE task ADD COLUMN description TEXT CHECK (
+        description != ''
+        AND trim(description, ' ' || char(9, 10, 13)) = description
+    )
+    """,
+    # TODO: once legacy's 8.x import is dropped, this becomes a no-op such as
+    # 'SELECT 1', Migration becomes str alone, and the README tells stores
+    # from before 9.4 to upgrade through a 9.4-9.x release first, or lose
+    # their descriptions.
+    description_files.migrate,
 )

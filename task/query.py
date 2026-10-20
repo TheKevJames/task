@@ -19,6 +19,7 @@ from . import schema
 
 class Target(enum.StrEnum):
     summary = 'summary'
+    description = 'description'
     namespace = 'namespace'
     tag = 'tag'
     claim = 'claim'
@@ -35,6 +36,7 @@ class Target(enum.StrEnum):
 # tags, and claims are stored lowercased.
 COLUMNS = {
     Target.summary: 'fold(summary)',
+    Target.description: "fold(coalesce(description, ''))",
     Target.namespace: 'namespace',
     Target.tag: 'tag',
     Target.claim: "coalesce(claim, '')",

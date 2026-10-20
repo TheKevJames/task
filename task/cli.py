@@ -28,7 +28,7 @@ from . import rules
 from . import schema
 from . import server
 
-# Whoever runs the CLI directly writes the files, so is the operator; the
+# Whoever runs the CLI directly writes the database, so is the operator; the
 # server runs commands for an agent as that agent, under its rules.
 WRITER = contextvars.ContextVar(
     'WRITER', default=ops.Writer(actors.OPERATOR_ACTOR)

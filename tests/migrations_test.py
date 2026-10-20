@@ -17,8 +17,9 @@ from task import schema
 
 LegacyNamespace = Callable[..., pathlib.Path]
 CREATED = datetime.datetime(2000, 1, 1, tzinfo=datetime.UTC)
-# How many migrations task 9.0.0 shipped.
+# How many migrations task 9.0.0 and 9.3.0 shipped.
 SHIPPED_9_0_0 = 11
+SHIPPED_9_3_0 = 29
 
 
 def test_8x_store_is_imported(
@@ -29,7 +30,9 @@ def test_8x_store_is_imported(
         legacy_namespace('b', [(1, 'z')], deleted=2),
         legacy_namespace('empty', [], deleted=1),
     ]
-    (folder / refs.DEFAULT / '5.txt').write_text('notes')
+    (folder / refs.DEFAULT / '5.txt').write_text('\nnotes\n')
+    (folder / 'b' / '2.txt').write_text('orphan')
+    (folder / 'b' / '.1.txt.tmp').write_text('half written')
 
     with db.write() as conn:
         imported = db.select(conn, ' ORDER BY namespace, id')
@@ -64,12 +67,7 @@ def test_8x_store_is_imported(
     ]
     assert db.namespaces() == ['b', refs.DEFAULT, 'empty']
     assert not any(database.exists() for database in databases)
-    assert sorted(p.name for p in folder.iterdir()) == [
-        'b',
-        refs.DEFAULT,
-        'empty',
-        db.DATABASE,
-    ]
+    assert [p.name for p in folder.iterdir()] == [db.DATABASE]
 
 
 def test_outdated_8x_store_is_refused(
@@ -196,6 +194,46 @@ def test_9_0_0_actor_names_are_lowercased(
     print(before, after, sep='\n')
     assert names == [('triage/1',)] * 3
     assert after == before
+
+
+def test_9_3_0_description_files_move_into_the_database(
+    folder: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = migrations.MIGRATIONS
+    monkeypatch.setattr(migrations, 'MIGRATIONS', shipped[:SHIPPED_9_3_0])
+    db.add_namespace('b')
+    db.add_namespace('c')
+    with db.write() as store:
+        store.conn.execute(
+            'INSERT INTO task (namespace, id, summary, tag, created, updated)'
+            " VALUES ('default', 1, 'a', 'a', :t, :t),"
+            " ('b', 1, 'b', 'a', :t, :t)",
+            {'t': '2000-01-01T00:00:00Z'},
+        )
+    files = {
+        'default/1.txt': '\n described \n',
+        'default/.1.txt.tmp': 'half written',
+        'default/9.txt': 'orphan',
+        'b/1.txt': ' \n',
+        'c/2.txt': 'orphan',
+        'c/unexpected': 'kept',
+    }
+    for name, text in files.items():
+        (folder / name).parent.mkdir(exist_ok=True)
+        (folder / name).write_text(text)
+
+    monkeypatch.setattr(migrations, 'MIGRATIONS', shipped)
+    with db.connect() as store:
+        tasks = db.select(store, ' ORDER BY namespace, id')
+
+    print(tasks)
+    assert [(t.ref, t.description) for t in tasks] == [
+        (refs.Ref('b', 1), None),
+        (refs.Ref(refs.DEFAULT, 1), 'described'),
+    ]
+    assert all(t.updated == CREATED for t in tasks)
+    remaining = sorted(str(p.relative_to(folder)) for p in folder.rglob('*'))
+    assert remaining == ['c', 'c/unexpected', db.DATABASE]
 
 
 def test_newer_database_is_refused(folder: pathlib.Path) -> None:

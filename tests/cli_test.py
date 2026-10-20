@@ -221,23 +221,23 @@ def test_metadata_flags() -> None:
     assert (task['priority'], task['size'], task['link']) == ('low', None, 'x')
 
 
-def test_descriptions_are_text_files(folder: pathlib.Path) -> None:
+def test_descriptions_are_stored_and_filtered(folder: pathlib.Path) -> None:
     run('add', 'a', '--description', ' x\n ')
-    run('add', 'b', '--description', 'y')
-    default = folder / 'default'
-    assert (default / '1.txt').read_text() == 'x'
+    run('add', 'b', '--description', 'Xy\nz')
+    run('add', 'c')
 
-    (default / '1.txt').write_text('\nedited by hand\n')
-    assert listed()[0]['description'] == 'edited by hand'
+    def summaries(filter_: str) -> list[object]:
+        return [task['summary'] for task in listed(filter_)]
+
+    assert listed()[0]['description'] == 'x'
+    assert summaries('description~X') == ['a', 'b']
+    assert summaries('description^=xy') == ['b']
+    assert summaries('description=') == ['c']
+    assert summaries('description!~z') == ['a', 'c']
 
     run('1', 'unset', 'description')
-    assert not (default / '1.txt').exists()
-    run('2', 'done')
-    assert not (default / '2.txt').exists()
-
-    (default / '9.txt').write_text('orphan')
-    run('add', 'c')
-    assert not (default / '9.txt').exists()
+    assert summaries('description=') == ['a', 'c']
+    assert [path.name for path in folder.iterdir()] == [db.DATABASE]
 
 
 @pytest.mark.usefixtures('folder')
@@ -290,8 +290,8 @@ def test_monthly_recurrence_clamps_to_month_end() -> None:
 def test_invalid_filters_are_refused() -> None:
     assert refused('list', '-f', 'bogus=1') == (
         "invalid target: 'bogus'"
-        ' (use summary, namespace, tag, claim, link, priority, size, next,'
-        ' questions, blocked)'
+        ' (use summary, description, namespace, tag, claim, link, priority,'
+        ' size, next, questions, blocked)'
     )
     for filter_ in ('questions~open', 'questions=closed', 'questions='):
         assert refused('list', '-f', filter_) == (

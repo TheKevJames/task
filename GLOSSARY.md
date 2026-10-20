@@ -12,6 +12,11 @@ uses.
 One entry in the task list, addressed by its namespace and id.
 _Avoid_: ticket, issue, item
 
+**Description**:
+A task's own account of its work, changed like any other part of the task,
+by whoever may change the task.
+_Avoid_: notes, body
+
 **Namespace**:
 A separately-granted part of the task list; a task's id is unique only
 within its namespace. The `default` namespace always exists, and its tasks
