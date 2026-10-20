@@ -7,7 +7,7 @@ import pathlib
 import socket
 import sys
 
-from . import schema
+from . import errors
 from . import server
 
 ADDRESS = 'TASK_SERVER'
@@ -17,7 +17,7 @@ def forward(path: pathlib.Path, argv: list[str]) -> int:
     """Run a command on the server at `path`; its exit code."""
     try:
         response = _exchange(path, server.request(argv))
-    except (OSError, ValueError, KeyError, schema.TaskError) as e:
+    except (OSError, ValueError, KeyError, errors.TaskError) as e:
         print(f'error: task server at {path}: {e}', file=sys.stderr)
         return 1
     sys.stdout.write(response.stdout)

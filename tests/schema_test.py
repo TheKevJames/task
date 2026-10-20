@@ -5,6 +5,7 @@ import pytest
 import time_machine
 from hypothesis import strategies as st
 
+from task import errors
 from task import schema
 
 INTERVAL = st.builds(
@@ -72,7 +73,7 @@ def test_ref_roundtrips(namespace: str, ident: int) -> None:
 def test_normalize_name_is_idempotent(value: str) -> None:
     try:
         name = schema.normalize_name('tag', value)
-    except schema.TaskError:
+    except errors.TaskError:
         return
     assert schema.normalize_name('tag', name) == name
 

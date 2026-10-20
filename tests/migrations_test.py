@@ -7,6 +7,7 @@ from collections.abc import Callable
 import pytest
 
 from task import db
+from task import errors
 from task import legacy
 from task import migrations
 from task import schema
@@ -76,7 +77,7 @@ def test_outdated_8x_store_is_refused(
         f'^namespace b: database is at version {legacy.VERSION - 1},'
         ' run any task 8.x command once to bring it up to date$'
     )
-    with pytest.raises(schema.TaskError, match=message), db.connect():
+    with pytest.raises(errors.TaskError, match=message), db.connect():
         pass
 
     assert current.exists()
@@ -93,5 +94,5 @@ def test_newer_database_is_refused(folder: pathlib.Path) -> None:
         f'^{db.DATABASE}: database is at version {version},'
         ' newer than this task CLI$'
     )
-    with pytest.raises(schema.TaskError, match=message), db.connect():
+    with pytest.raises(errors.TaskError, match=message), db.connect():
         pass

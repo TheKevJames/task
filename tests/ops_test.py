@@ -6,13 +6,15 @@ import hypothesis
 import pytest
 from hypothesis import strategies as st
 
+from task import actors
 from task import db
+from task import errors
 from task import ops
 from task import query
 from task import schema
 
-AGENTS = (schema.Actor.agent('a/1'), schema.Actor.agent('b/2'))
-ACTORS = (schema.OPERATOR_ACTOR, *AGENTS)
+AGENTS = (actors.Actor.agent('a/1'), actors.Actor.agent('b/2'))
+ACTORS = (actors.OPERATOR_ACTOR, *AGENTS)
 REF = schema.Ref(schema.DEFAULT, 1)
 
 
@@ -24,18 +26,18 @@ class Op(enum.Enum):
 
 
 def expected(
-    claim: str | None, actor: schema.Actor, op: Op, force: bool
+    claim: str | None, actor: actors.Actor, op: Op, force: bool
 ) -> str | None | Exception:
     """The task's claim after `op`, or the error refusing it."""
     mine = claim in {None, actor.name}
     result: str | None | Exception
     match op:
         case _ if force and not actor.is_operator:
-            result = schema.TaskError('only the operator may force a change')
+            result = errors.TaskError('only the operator may force a change')
         case Op.claim:
             result = actor.name if mine or force else _claimed(claim)
         case Op.release if claim is None:
-            result = schema.TaskError('task 1 is not claimed')
+            result = errors.TaskError('task 1 is not claimed')
         case Op.release:
             result = None if claim == actor.name or force else _claimed(claim)
         case Op.change if actor.is_operator:
@@ -49,11 +51,11 @@ def expected(
     return result
 
 
-def _claimed(claim: str | None) -> schema.TaskError:
-    return schema.TaskError(f'task 1 is claimed by {claim}')
+def _claimed(claim: str | None) -> errors.TaskError:
+    return errors.TaskError(f'task 1 is claimed by {claim}')
 
 
-def apply(actor: schema.Actor, op: Op, force: bool) -> None:
+def apply(actor: actors.Actor, op: Op, force: bool) -> None:
     writer = ops.Writer(actor)
     match op:
         case Op.claim:
@@ -74,22 +76,22 @@ STEP = st.tuples(
 @hypothesis.settings(max_examples=200, deadline=None)
 @hypothesis.given(st.lists(STEP, max_size=12))
 def test_claims_follow_the_matrix(
-    steps: list[tuple[schema.Actor, Op, bool]],
+    steps: list[tuple[actors.Actor, Op, bool]],
 ) -> None:
     with (
         tempfile.TemporaryDirectory() as folder,
         pytest.MonkeyPatch.context() as monkeypatch,
     ):
         monkeypatch.setenv('TASK_FOLDER', folder)
-        ops.Writer(schema.OPERATOR_ACTOR).add(
+        ops.Writer(actors.OPERATOR_ACTOR).add(
             schema.Task(summary='a', details=None, tag=schema.TRIAGE)
         )
         claim = None
         for actor, op, force in steps:
             want = expected(claim, actor, op, force)
             print(f'{actor.name} {op.value} force={force}: want {want!r}')
-            if isinstance(want, schema.TaskError):
-                with pytest.raises(schema.TaskError, match=f'^{want}$'):
+            if isinstance(want, errors.TaskError):
+                with pytest.raises(errors.TaskError, match=f'^{want}$'):
                     apply(actor, op, force)
             else:
                 apply(actor, op, force)
@@ -106,8 +108,8 @@ def test_agents_claim_what_they_add() -> None:
         assert task.claim == (None if actor.is_operator else actor.name)
 
 
-@pytest.mark.parametrize('name', [schema.OPERATOR, 'a b', ''])
+@pytest.mark.parametrize('name', [actors.OPERATOR, 'a b', ''])
 def test_agents_cannot_be_misnamed(name: str) -> None:
-    with contextlib.suppress(schema.TaskError):
-        schema.Actor.agent(name)
+    with contextlib.suppress(errors.TaskError):
+        actors.Actor.agent(name)
         pytest.fail(f'agent {name!r} was allowed')

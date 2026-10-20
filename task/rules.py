@@ -39,6 +39,7 @@ import pathlib
 import tomllib
 from collections.abc import Mapping
 
+from . import errors
 from . import ops
 from . import schema
 
@@ -108,11 +109,11 @@ class Rules:
             return
         if change.verb is ops.Verb.done:
             if not (self.change and self.change.done):
-                raise schema.TaskError(
+                raise errors.TaskError(
                     f'you may not mark {before.ref} as done'
                 )
         elif after is None:
-            raise schema.TaskError(f'you may not delete {before.ref}')
+            raise errors.TaskError(f'you may not delete {before.ref}')
         # Changing a task claims it first, even one the change deletes.
         if before.claim != change.actor.name and (
             after is None or after.claim == change.actor.name
@@ -123,20 +124,20 @@ class Rules:
 
     def _check_create(self, task: schema.Task) -> None:
         if self.create is None or not self.create.scope.holds(task):
-            raise schema.TaskError(
+            raise errors.TaskError(
                 f'you may not create tasks in {_section(task)}'
             )
         for field in self.create.require:
             if _value(task, field) is None:
-                raise schema.TaskError(f'a new task needs its {field}')
+                raise errors.TaskError(f'a new task needs its {field}')
         allowed = self.create.fields | self.create.require
         for field in ATTRIBUTES.keys() - allowed:
             if _value(task, field) not in {None, False}:
-                raise schema.TaskError(f'you may not set {field}')
+                raise errors.TaskError(f'you may not set {field}')
 
     def _check_claim(self, task: schema.Task) -> None:
         if self.claim is None or not self.claim.holds(task):
-            raise schema.TaskError(
+            raise errors.TaskError(
                 f'you may not claim tasks in {_section(task)}'
             )
 
@@ -145,7 +146,7 @@ class Rules:
         for field in _changed(before, after):
             if field is Field.tag:
                 if not (self.change and after.tag in self.change.tags):
-                    raise schema.TaskError(
+                    raise errors.TaskError(
                         f'you may not move tasks to {after.tag}'
                     )
             elif field is Field.namespace:
@@ -153,7 +154,7 @@ class Rules:
                 if Field.namespace not in granted or not (
                     scope and after.namespace in scope.namespaces
                 ):
-                    raise schema.TaskError(
+                    raise errors.TaskError(
                         f'you may not move tasks to {after.namespace}'
                     )
             elif field is Field.description:
@@ -161,9 +162,9 @@ class Rules:
                     Field.description_append in granted
                     and _appended(before.description, after.description)
                 ):
-                    raise schema.TaskError('you may not change description')
+                    raise errors.TaskError('you may not change description')
             elif field not in granted:
-                raise schema.TaskError(f'you may not change {field}')
+                raise errors.TaskError(f'you may not change {field}')
 
 
 def _section(task: schema.Task) -> str:
@@ -209,7 +210,7 @@ def load(path: pathlib.Path) -> dict[str, Rules]:
     try:
         return parse(tomllib.loads(path.read_text(encoding='utf-8')))
     except (OSError, tomllib.TOMLDecodeError) as e:
-        raise schema.TaskError(f'{path}: {e}') from None
+        raise errors.TaskError(f'{path}: {e}') from None
 
 
 class _Table:
@@ -217,7 +218,7 @@ class _Table:
 
     def __init__(self, data: object, where: str) -> None:
         if not isinstance(data, dict):
-            raise schema.TaskError(f'{where}: must be a table')
+            raise errors.TaskError(f'{where}: must be a table')
         self.data: dict[str, object] = data
         self.where = where
         self.used: set[str] = set()
@@ -238,7 +239,7 @@ class _Table:
             else []
         )
         if strings != value:
-            raise schema.TaskError(
+            raise errors.TaskError(
                 f'{self.where}.{key}: must be a list of strings'
             )
         if not normalize:
@@ -257,13 +258,13 @@ class _Table:
         self.used.add(key)
         value = self.data.get(key, False)
         if not isinstance(value, bool):
-            raise schema.TaskError(f'{self.where}.{key}: must be a boolean')
+            raise errors.TaskError(f'{self.where}.{key}: must be a boolean')
         return value
 
     def done(self) -> None:
         unknown = set(self.data) - self.used
         if unknown:
-            raise schema.TaskError(
+            raise errors.TaskError(
                 f'{self.where}: unknown keys {", ".join(sorted(unknown))}'
             )
 

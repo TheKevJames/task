@@ -14,7 +14,9 @@ import dataclasses
 import enum
 from collections.abc import Callable
 
+from . import actors
 from . import db
+from . import errors
 from . import query
 from . import schema
 
@@ -37,7 +39,7 @@ class Verb(enum.StrEnum):
 class Change:
     """One change, as a guard sees it before it is stored."""
 
-    actor: schema.Actor
+    actor: actors.Actor
     verb: Verb
     # None when the change creates the task.
     before: schema.Task | None
@@ -56,7 +58,7 @@ def allow(change: Change) -> None:
 
 @dataclasses.dataclass(frozen=True)
 class Writer:
-    actor: schema.Actor
+    actor: actors.Actor
     guard: Guard = allow
 
     def add(self, task: schema.Task) -> None:
@@ -136,7 +138,7 @@ class Writer:
                 change = Change(self.actor, Verb.next, before, after, store)
                 try:
                     self.guard(change)
-                except schema.TaskError:
+                except errors.TaskError:
                     continue
                 db.update(store, after)
                 return after

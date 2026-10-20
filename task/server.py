@@ -14,7 +14,7 @@ import json
 import pathlib
 from collections.abc import Callable
 
-from . import schema
+from . import errors
 
 PROTOCOL = 1
 # Far beyond any command's arguments; a longer line fails the request.
@@ -75,8 +75,8 @@ async def _respond(line: bytes, handle: Handler) -> Response:
         if not isinstance(argv, list) or not all(
             isinstance(arg, str) for arg in argv
         ):
-            raise schema.TaskError('argv must be a list of strings')
-    except (ValueError, KeyError, TypeError, schema.TaskError) as e:
+            raise errors.TaskError('argv must be a list of strings')
+    except (ValueError, KeyError, TypeError, errors.TaskError) as e:
         return Response(2, error=f'bad request: {e}')
     return await asyncio.to_thread(handle, argv)
 
@@ -84,7 +84,7 @@ async def _respond(line: bytes, handle: Handler) -> Response:
 def _check_protocol(data: object) -> None:
     if not isinstance(data, dict) or data.get('protocol') != PROTOCOL:
         version = data.get('protocol') if isinstance(data, dict) else None
-        raise schema.TaskError(
+        raise errors.TaskError(
             f"protocol {version} is not this task's protocol {PROTOCOL}:"
             ' the server and CLI are different versions'
         )
