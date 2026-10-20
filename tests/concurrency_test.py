@@ -24,8 +24,8 @@ def task(*args: str) -> subprocess.Popen[str]:
 def as_agent(name: str, code: str) -> subprocess.Popen[str]:
     """Run `code` with `writer` as agent `name`, as its own process."""
     setup = (
-        'from task import ops, query, schema;'
-        f' writer = ops.Writer(schema.Actor.agent({name!r}))'
+        'from task import actors, ops, query, schema;'
+        f' writer = ops.Writer(actors.Actor.agent({name!r}))'
     )
     return subprocess.Popen(
         [sys.executable, '-c', f'{setup}; {code}'],

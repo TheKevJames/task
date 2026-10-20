@@ -16,8 +16,10 @@ import typer
 from typer import _click
 from typer import core
 
+from . import actors
 from . import client
 from . import db
+from . import errors
 from . import ops
 from . import query
 from . import rules
@@ -27,7 +29,7 @@ from . import server
 # Whoever runs the CLI directly writes the files, so is the operator; the
 # server runs commands for an agent as that agent, under its rules.
 WRITER = contextvars.ContextVar(
-    'WRITER', default=ops.Writer(schema.OPERATOR_ACTOR)
+    'WRITER', default=ops.Writer(actors.OPERATOR_ACTOR)
 )
 # Where commands print; None for stdout. The server collects each command's.
 OUTPUT: contextvars.ContextVar[TextIO | None] = contextvars.ContextVar(
@@ -45,7 +47,7 @@ def echo(value: object, file: TextIO | None = None) -> None:
 
 def operator_only(command: str) -> None:
     if not writer().actor.is_operator:
-        raise schema.TaskError(f'only the operator may {command}')
+        raise errors.TaskError(f'only the operator may {command}')
 
 
 class SubjectGroup(core.TyperGroup):
@@ -325,7 +327,7 @@ def describe(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
 
     def edit(task: schema.Task) -> schema.Task:
         if task.description != original:
-            raise schema.TaskError(
+            raise errors.TaskError(
                 f"task {ref}'s description changed while editing"
             )
         task.update(description=edited)
@@ -419,8 +421,8 @@ def serve(
     operator_only('serve')
     rules_ = rules.load(rules_file)
     if agent not in rules_:
-        raise schema.TaskError(f'{rules_file}: no rules for {agent}')
-    guarded = ops.Writer(schema.Actor.agent(name), rules_[agent].check)
+        raise errors.TaskError(f'{rules_file}: no rules for {agent}')
+    guarded = ops.Writer(actors.Actor.agent(name), rules_[agent].check)
     asyncio.run(server.serve_forever(socket, functools.partial(run, guarded)))
 
 
@@ -436,7 +438,7 @@ def run(writer_: ops.Writer, argv: list[str]) -> server.Response:
     output_token = OUTPUT.set(output)
     try:
         code = app(argv, prog_name='task', standalone_mode=False)
-    except schema.TaskError as e:
+    except errors.TaskError as e:
         return server.Response(1, output.getvalue(), str(e))
     except _click.exceptions.ClickException as e:
         return server.Response(
@@ -460,6 +462,6 @@ def cli() -> None:
         sys.exit(client.forward(pathlib.Path(address), argv))
     try:
         app()
-    except schema.TaskError as e:
+    except errors.TaskError as e:
         echo(f'error: {e}', file=sys.stderr)
         sys.exit(1)

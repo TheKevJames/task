@@ -9,56 +9,21 @@ from typing import TypeVar
 
 import pydantic
 
+from . import actors
+from . import errors
 from . import timestamp
 
-# An actor's name, as its claims record it; the claim CHECK in migrations must
-# agree.
-CLAIM_RE = re.compile(r'[A-Za-z0-9_./-]+')
 LINK_RE = re.compile(r'\S+')
 # Tags and namespaces; their CHECKs in migrations must agree.
 NAME_RE = re.compile(r'[a-z0-9][a-z0-9_.-]*')
 REF_RE = re.compile(rf'(?:(?P<namespace>{NAME_RE.pattern}):)?(?P<id>\d+)')
 TRIAGE = 'triage'
 DEFAULT = 'default'
-OPERATOR = 'operator'
-
-
-class TaskError(Exception):
-    """A user-facing failure, reported without a traceback."""
-
-
-def check_claim(value: str) -> str:
-    if not CLAIM_RE.fullmatch(value):
-        raise TaskError(f'invalid claim: {value!r}')
-    return value
-
-
-@dataclasses.dataclass(frozen=True)
-class Actor:
-    """
-    Whoever makes a change: the operator, or an agent. An agent's name is
-    given by whatever authenticated it, never by the agent itself.
-    """
-
-    name: str
-
-    @classmethod
-    def agent(cls, name: str) -> Self:
-        if name == OPERATOR:
-            raise TaskError(f'an agent cannot be named {OPERATOR}')
-        return cls(check_claim(name))
-
-    @property
-    def is_operator(self) -> bool:
-        return self.name == OPERATOR
-
-
-OPERATOR_ACTOR = Actor(OPERATOR)
 
 
 def check_link(value: str) -> str:
     if not LINK_RE.fullmatch(value):
-        raise TaskError(f'invalid link: {value!r}')
+        raise errors.TaskError(f'invalid link: {value!r}')
     return value
 
 
@@ -91,7 +56,7 @@ def parse_enum(kind: type[E], value: str) -> E:
         return kind(value)
     except ValueError:
         choices = ', '.join(kind)
-        raise TaskError(
+        raise errors.TaskError(
             f'invalid {kind.__name__.lower()}: {value!r} (use {choices})'
         ) from None
 
@@ -100,7 +65,7 @@ def normalize_name(kind: str, value: str) -> str:
     """A tag or namespace: ` Foo ` -> `foo`."""
     name = value.strip().lower()
     if not NAME_RE.fullmatch(name):
-        raise TaskError(f'invalid {kind}: {value!r}')
+        raise errors.TaskError(f'invalid {kind}: {value!r}')
     return name
 
 
@@ -115,7 +80,7 @@ class Ref:
     def parse(cls, value: str) -> Self:
         match = REF_RE.fullmatch(value)
         if not match:
-            raise TaskError(f'invalid task id: {value!r}')
+            raise errors.TaskError(f'invalid task id: {value!r}')
         return cls(match.group('namespace') or DEFAULT, int(match.group('id')))
 
     def __str__(self) -> str:
@@ -131,7 +96,7 @@ class Interval(pydantic.BaseModel, extra='forbid'):
     @classmethod
     def validate_raw(cls, value: str) -> str:
         if not INTERVAL_RE.fullmatch(value):
-            raise TaskError(f'invalid interval: {value!r}')
+            raise errors.TaskError(f'invalid interval: {value!r}')
         return value
 
     @property
@@ -207,27 +172,27 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
     @classmethod
     def validate_summary(cls, value: str) -> str:
         if not value.strip() or '\n' in value:
-            raise TaskError(f'invalid summary: {value!r}')
+            raise errors.TaskError(f'invalid summary: {value!r}')
         return value
 
     @pydantic.field_validator('namespace', 'tag')
     @classmethod
     def validate_name(cls, value: str, info: pydantic.ValidationInfo) -> str:
         if not NAME_RE.fullmatch(value):
-            raise TaskError(f'invalid {info.field_name}: {value!r}')
+            raise errors.TaskError(f'invalid {info.field_name}: {value!r}')
         return value
 
     @pydantic.field_validator('description')
     @classmethod
     def validate_description(cls, value: str | None) -> str | None:
         if value is not None and value != value.strip():
-            raise TaskError('description is not stripped')
+            raise errors.TaskError('description is not stripped')
         return value or None
 
     @pydantic.field_validator('claim')
     @classmethod
     def validate_claim(cls, value: str | None) -> str | None:
-        return None if value is None else check_claim(value)
+        return None if value is None else actors.check_claim(value)
 
     @pydantic.field_validator('link')
     @classmethod
@@ -261,7 +226,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         """The next occurrence if recurring; None, to delete it, if not."""
         if not (self.details and self.details.interval):
             if ago:
-                raise TaskError('--ago only applies to recurring tasks')
+                raise errors.TaskError('--ago only applies to recurring tasks')
             return None
 
         new_task = self.model_copy()
@@ -284,7 +249,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             new_task.details = Details.model_validate(details)
         elif self.details:
             if self.details.interval and not self.details.shift:
-                raise TaskError(
+                raise errors.TaskError(
                     'recurring tasks with fixed recurrence cannot be delayed'
                 )
         else:
@@ -311,7 +276,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         size: str | None = None,
     ) -> None:
         if description is not None and description_append is not None:
-            raise TaskError(
+            raise errors.TaskError(
                 '--description and --description-append are exclusive'
             )
         if namespace is not None:
@@ -360,30 +325,36 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         else:
             self.description = addition
 
-    def claim_as(self, actor: Actor, *, force: bool = False) -> None:
+    def claim_as(self, actor: actors.Actor, *, force: bool = False) -> None:
         """Compare-and-set: only an unclaimed task may change hands."""
         _check_force(actor, force)
         if self.claim not in {None, actor.name} and not force:
-            raise TaskError(f'task {self.ref} is claimed by {self.claim}')
+            raise errors.TaskError(
+                f'task {self.ref} is claimed by {self.claim}'
+            )
         self.claim = actor.name
 
-    def release_as(self, actor: Actor, *, force: bool = False) -> None:
+    def release_as(self, actor: actors.Actor, *, force: bool = False) -> None:
         _check_force(actor, force)
         if self.claim is None:
-            raise TaskError(f'task {self.ref} is not claimed')
+            raise errors.TaskError(f'task {self.ref} is not claimed')
         if self.claim != actor.name and not force:
-            raise TaskError(f'task {self.ref} is claimed by {self.claim}')
+            raise errors.TaskError(
+                f'task {self.ref} is claimed by {self.claim}'
+            )
         self.claim = None
 
-    def authorize(self, actor: Actor, *, force: bool = False) -> None:
+    def authorize(self, actor: actors.Actor, *, force: bool = False) -> None:
         """
         Before `actor` changes this task: an agent claims it, and the operator
         may change only an unclaimed task or their own, unless forced.
         """
         if not actor.is_operator:
             self.claim_as(actor, force=force)
-        elif self.claim not in {None, OPERATOR} and not force:
-            raise TaskError(f'task {self.ref} is claimed by {self.claim}')
+        elif self.claim not in {None, actors.OPERATOR} and not force:
+            raise errors.TaskError(
+                f'task {self.ref} is claimed by {self.claim}'
+            )
 
     def clear(self, fields: Iterable['ClearableField']) -> None:
         for field in fields:
@@ -471,9 +442,9 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         return f'{self.details.next_} ({status})'
 
 
-def _check_force(actor: Actor, force: bool) -> None:
+def _check_force(actor: actors.Actor, force: bool) -> None:
     if force and not actor.is_operator:
-        raise TaskError('only the operator may force a change')
+        raise errors.TaskError('only the operator may force a change')
 
 
 class ClearableField(enum.StrEnum):

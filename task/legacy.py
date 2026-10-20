@@ -7,6 +7,7 @@ import contextlib
 import pathlib
 import sqlite3
 
+from . import errors
 from . import schema
 
 DATABASE = 'tasks.db'
@@ -42,7 +43,7 @@ def import_(
             _import(conn, database)
         except sqlite3.DatabaseError as e:
             name = database.parent.name
-            raise schema.TaskError(f'namespace {name}: {e}') from e
+            raise errors.TaskError(f'namespace {name}: {e}') from e
     return databases
 
 
@@ -53,7 +54,7 @@ def _import(conn: sqlite3.Connection, database: pathlib.Path) -> None:
     with contextlib.closing(sqlite3.connect(uri, uri=True)) as source:
         (version,) = source.execute('PRAGMA user_version').fetchone()
         if version != VERSION:
-            raise schema.TaskError(
+            raise errors.TaskError(
                 f'namespace {namespace}: database is at version {version},'
                 ' run any task 8.x command once to bring it up to date'
             )

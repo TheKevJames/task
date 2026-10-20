@@ -7,13 +7,15 @@ import sysconfig
 import pytest
 from typer import testing
 
+from task import actors
 from task import cli
 from task import db
+from task import errors
 from task import ops
 from task import schema
 
 RUNNER = testing.CliRunner()
-AGENT = schema.Actor.agent('triage/task-1')
+AGENT = actors.Actor.agent('triage/task-1')
 pytestmark = pytest.mark.usefixtures('today')
 
 
@@ -30,7 +32,7 @@ def run(*args: str) -> str:
 
 def refused(*args: str) -> str:
     """The message `task.cli.cli` reports for a refused invocation."""
-    with pytest.raises(schema.TaskError) as excinfo:
+    with pytest.raises(errors.TaskError) as excinfo:
         invoke(*args)
     return str(excinfo.value)
 
@@ -165,7 +167,7 @@ def test_the_operator_forces_changes_to_others_claims(
     after = json.loads(run('1', *args, '--force', '--json'))
     print(f'{args} --force left {after}')
     if args[0] == 'claim':
-        assert after['claim'] == schema.OPERATOR
+        assert after['claim'] == actors.OPERATOR
     elif args[0] == 'release':
         assert after['claim'] is None
     elif after is not None:

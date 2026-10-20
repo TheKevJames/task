@@ -5,7 +5,9 @@ from typing import Unpack
 
 import pytest
 
+from task import actors
 from task import db
+from task import errors
 from task import ops
 from task import query
 from task import rules
@@ -26,7 +28,7 @@ tags = ["triage"]
 fields = ["description_append", "priority"]
 tags = ["build", "triage"]
 """
-AGENT = schema.Actor.agent('triage/task-1')
+AGENT = actors.Actor.agent('triage/task-1')
 
 
 class Fields(TypedDict, total=False):
@@ -41,7 +43,7 @@ class Fields(TypedDict, total=False):
     size: str
 
 
-OPERATOR = ops.Writer(schema.OPERATOR_ACTOR)
+OPERATOR = ops.Writer(actors.OPERATOR_ACTOR)
 
 
 def agent(text: str = RULES) -> ops.Writer:
@@ -112,7 +114,7 @@ def test_rules_grant_only_what_they_name(
     if error is None:
         action(writer)
         return
-    with pytest.raises(schema.TaskError, match=error):
+    with pytest.raises(errors.TaskError, match=error):
         action(writer)
     assert stored('bakery:1').claim is None
 
@@ -129,7 +131,7 @@ def test_no_rules_deny_everything() -> None:
         set_(priority='high'),
     ]
     for action in actions:
-        with pytest.raises(schema.TaskError, match='^you may not'):
+        with pytest.raises(errors.TaskError, match='^you may not'):
             action(agent('[triage]'))
 
 
@@ -142,7 +144,7 @@ def test_agents_change_what_they_create_under_its_rule() -> None:
     writer.change(ops.Verb.set, created.ref, _prioritized)
     writer.release(created.ref)
     with pytest.raises(
-        schema.TaskError, match='claim tasks in bakery > build'
+        errors.TaskError, match='claim tasks in bakery > build'
     ):
         writer.change(ops.Verb.set, created.ref, _prioritized)
 
@@ -174,5 +176,5 @@ def test_next_skips_what_the_agent_may_not_claim() -> None:
     ],
 )
 def test_invalid_rules_are_refused(text: str, error: str) -> None:
-    with pytest.raises(schema.TaskError, match=error):
+    with pytest.raises(errors.TaskError, match=error):
         rules.parse(tomllib.loads(text))

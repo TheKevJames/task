@@ -10,7 +10,9 @@ import hypothesis
 import pytest
 from hypothesis import strategies as st
 
+from task import actors
 from task import db
+from task import errors
 from task import query
 from task import schema
 
@@ -27,7 +29,7 @@ DESCRIPTION = st.text(
     string.ascii_letters + string.digits + string.punctuation + ' \n',
     max_size=80,
 ).map(lambda x: x.strip() or None)
-CLAIM = st.none() | st.from_regex(schema.CLAIM_RE, fullmatch=True)
+CLAIM = st.none() | st.from_regex(actors.CLAIM_RE, fullmatch=True)
 LINK = st.none() | st.builds(
     lambda repo, path, line: (
         f'https://github.com/TheKevJames/{repo}/blob/HEAD/{path}#L{line}'
@@ -413,7 +415,7 @@ def test_only_empty_namespaces_may_be_deleted(folder: pathlib.Path) -> None:
         ('b', 'not empty'),
         ('c', 'no such namespace'),
     ):
-        with pytest.raises(schema.TaskError, match=error):
+        with pytest.raises(errors.TaskError, match=error):
             db.delete_namespace(namespace)
 
     with db.write() as conn:
@@ -427,7 +429,7 @@ def test_only_empty_namespaces_may_be_deleted(folder: pathlib.Path) -> None:
     db.add_namespace('c')
     (folder / 'c').mkdir()
     (folder / 'c' / 'unexpected').write_text('')
-    with pytest.raises(schema.TaskError, match='^namespace c: '):
+    with pytest.raises(errors.TaskError, match='^namespace c: '):
         db.delete_namespace('c')
     assert db.namespaces() == ['c', schema.DEFAULT]
     (folder / 'c' / 'unexpected').unlink()

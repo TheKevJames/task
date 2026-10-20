@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from task import actors
 from task import cli
 from task import client
 from task import db
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     import _typeshed
 
 TASK = pathlib.Path(sysconfig.get_path('scripts')) / 'task'
-AGENT = schema.Actor.agent('scout/daily')
+AGENT = actors.Actor.agent('scout/daily')
 RULES = """
 [scout.create]
 namespaces = ["bakery"]
@@ -110,7 +111,7 @@ def test_agents_are_refused_what_only_the_operator_may_do(
 ) -> None:
     schema_task = schema.Task(summary='a', details=None, tag='t')
     schema_task.namespace = 'bakery'
-    ops.Writer(schema.OPERATOR_ACTOR).add(schema_task)
+    ops.Writer(actors.OPERATOR_ACTOR).add(schema_task)
 
     result = run(address, *args)
     assert result.returncode != 0

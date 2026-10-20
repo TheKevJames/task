@@ -8,6 +8,7 @@ from typing import Self
 
 import pydantic
 
+from . import errors
 from . import schema
 
 
@@ -49,7 +50,7 @@ class Filter(pydantic.BaseModel, extra='forbid'):
         if self.target is not Target.next:
             return self
         if self.contains:
-            raise schema.TaskError(
+            raise errors.TaskError(
                 'next only supports exact matches'
                 ' (use eg. next=2026-01-31, next!=2026-01-31, next=)'
             )
@@ -57,7 +58,7 @@ class Filter(pydantic.BaseModel, extra='forbid'):
             try:
                 self.data = datetime.date.fromisoformat(self.data).isoformat()
             except ValueError:
-                raise schema.TaskError(
+                raise errors.TaskError(
                     f'invalid date: {self.data!r} (use eg. 2026-01-31)'
                 ) from None
         return self
@@ -72,7 +73,7 @@ class Filter(pydantic.BaseModel, extra='forbid'):
                 r'(?P<target>[^!=~]+)(?P<op>!?[=~])(?P<data>.*)', filter_
             )
             if not match:
-                raise schema.TaskError(
+                raise errors.TaskError(
                     f'invalid filter: {filter_!r}'
                     ' (use eg. tag=a, tag!=a, tag~a, tag!~a)'
                 )

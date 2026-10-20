@@ -27,6 +27,7 @@ import sqlite3
 import uuid
 from collections.abc import Generator
 
+from . import errors
 from . import legacy
 from . import migrations
 from . import schema
@@ -79,18 +80,18 @@ def add_namespace(namespace: str) -> None:
             (namespace,),
         ).fetchone()
     if added is None:
-        raise schema.TaskError(f'namespace {namespace} already exists')
+        raise errors.TaskError(f'namespace {namespace} already exists')
 
 
 def delete_namespace(namespace: str) -> None:
     """Delete an empty namespace; its orphans and temporary files go too."""
     if namespace == schema.DEFAULT:
-        raise schema.TaskError(f'namespace {schema.DEFAULT} cannot be deleted')
+        raise errors.TaskError(f'namespace {schema.DEFAULT} cannot be deleted')
     with write() as store:
         _require_namespace(store, namespace)
         query = 'SELECT 1 FROM task WHERE namespace = ? LIMIT 1'
         if store.conn.execute(query, (namespace,)).fetchone():
-            raise schema.TaskError(f'namespace {namespace} is not empty')
+            raise errors.TaskError(f'namespace {namespace} is not empty')
         store.conn.execute(
             'DELETE FROM namespace WHERE name = ?', (namespace,)
         )
@@ -105,7 +106,7 @@ def delete_namespace(namespace: str) -> None:
         try:
             path.rmdir()
         except OSError as e:
-            raise schema.TaskError(f'namespace {namespace}: {e}') from e
+            raise errors.TaskError(f'namespace {namespace}: {e}') from e
 
 
 @contextlib.contextmanager
@@ -133,7 +134,7 @@ def _directory(namespace: str) -> pathlib.Path:
 def _require_namespace(store: Store, namespace: str) -> None:
     query = 'SELECT 1 FROM namespace WHERE name = ?'
     if not store.conn.execute(query, (namespace,)).fetchone():
-        raise schema.TaskError(f'no such namespace: {namespace}')
+        raise errors.TaskError(f'no such namespace: {namespace}')
 
 
 def _connect(database: pathlib.Path) -> sqlite3.Connection:
@@ -156,9 +157,9 @@ def _open() -> sqlite3.Connection:
     conn = _connect(path)
     try:
         _migrate(conn)
-    except (sqlite3.DatabaseError, schema.TaskError) as e:
+    except (sqlite3.DatabaseError, errors.TaskError) as e:
         conn.close()
-        raise schema.TaskError(f'{DATABASE}: {e}') from e
+        raise errors.TaskError(f'{DATABASE}: {e}') from e
     return conn
 
 
@@ -177,7 +178,7 @@ def _create(path: pathlib.Path) -> None:
             _migrate(conn)
             with _transaction(conn):
                 imported = legacy.import_(conn, path.parent)
-        except schema.TaskError:
+        except errors.TaskError:
             if path.is_file():
                 return
             raise
@@ -209,7 +210,7 @@ def _transaction(conn: sqlite3.Connection) -> Generator[None]:
 def _version(conn: sqlite3.Connection) -> int:
     version: int = conn.execute('PRAGMA user_version').fetchone()[0]
     if version > len(migrations.MIGRATIONS):
-        raise schema.TaskError(
+        raise errors.TaskError(
             f'database is at version {version}, newer than this task CLI'
         )
     return version
@@ -240,7 +241,7 @@ def get(store: Store, ref: schema.Ref) -> schema.Task:
         {'namespace': ref.namespace, 'id': ref.ident},
     )
     if not tasks:
-        raise schema.TaskError(f'task {ref} not found')
+        raise errors.TaskError(f'task {ref} not found')
     return tasks[0]
 
 
