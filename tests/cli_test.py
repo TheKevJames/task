@@ -1,6 +1,7 @@
 import datetime
 import json
 import pathlib
+import re
 import sqlite3
 import sysconfig
 
@@ -354,7 +355,10 @@ def test_done_advances_fixed_schedules_past_today() -> None:
 def test_the_due_date_is_no_longer_next() -> None:
     result = invoke('add', 'a', '--next', '2026-02-01')
     assert result.exit_code == 2
-    assert 'No such option: --next' in result.output
+    # Rich styles usage errors on GitHub Actions.
+    assert 'No such option: --next' in re.sub(
+        r'\x1b\[[0-9;]*m', '', result.output
+    )
     run('add', 'a', '--due', '2026-02-01')
     [task] = listed('due=2026-02-01')
     assert 'next' not in task
