@@ -41,7 +41,9 @@ MoveNamespace = Annotated[
     ),
 ]
 Tag = Annotated[str | None, typer.Option('--tag', help='Section, eg. build')]
-Next = Annotated[str | None, typer.Option('--next')]
+Due = Annotated[
+    str | None, typer.Option('--due', help='Due date, eg. 2026-01-31')
+]
 Interval = Annotated[
     str | None,
     typer.Option(

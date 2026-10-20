@@ -125,7 +125,7 @@ def due(
     as_json: options.AsJson = False,
 ) -> None:
     """List scheduled tasks due within the given number of days."""
-    print_tasks(_listed(f'next!=,{filter_}', days, limit, sort), as_json)
+    print_tasks(_listed(f'due!=,{filter_}', days, limit, sort), as_json)
 
 
 def _listed(
@@ -144,7 +144,7 @@ def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too
     summary: str,
     namespace: options.AddNamespace = refs.DEFAULT,
     tag: options.Tag = None,
-    next_: options.Next = None,
+    due_: options.Due = None,
     interval: options.Interval = None,
     shift: options.Shift = None,
     description: options.Description = None,
@@ -166,7 +166,7 @@ def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too
     )
     task.update(
         tag=tag,
-        next_=next_,
+        due=due_,
         interval=interval,
         shift=shift,
         description=description,
@@ -208,7 +208,7 @@ def done(
         next_occurrence,
         as_json,
         f'completed recurring task {ref},'
-        f' next occurrence: {next_occurrence.details.next_}',
+        f' next due {next_occurrence.details.due}',
     )
 
 
@@ -224,11 +224,7 @@ def delay(
         ops.Verb.delay, ref, lambda task: task.delay(days), force=force
     )
     assert delayed.details, 'delayed task has no details'
-    report(
-        delayed,
-        as_json,
-        f'delayed task {ref}, next occurrence: {delayed.details.next_}',
-    )
+    report(delayed, as_json, f'delayed task {ref}, due {delayed.details.due}')
 
 
 @app.command('set', rich_help_panel=SUBJECT_PANEL)
@@ -237,7 +233,7 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     summary: options.Summary = None,
     namespace: options.MoveNamespace = None,
     tag: options.Tag = None,
-    next_: options.Next = None,
+    due_: options.Due = None,
     interval: options.Interval = None,
     shift: options.Shift = None,
     description: options.Description = None,
@@ -262,7 +258,7 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             summary=summary,
             namespace=namespace,
             tag=tag,
-            next_=next_,
+            due=due_,
             interval=interval,
             shift=shift,
             description=description,

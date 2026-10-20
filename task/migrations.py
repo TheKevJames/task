@@ -323,4 +323,6 @@ MIGRATIONS: tuple[Migration, ...] = (
     # from before 9.4 to upgrade through a 9.4-9.x release first, or lose
     # their descriptions.
     description_files.migrate,
+    # A task's due date was `next`; SQLite renames it in the CHECKs too.
+    'ALTER TABLE task RENAME COLUMN next TO due',
 )

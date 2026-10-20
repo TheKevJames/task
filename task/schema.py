@@ -162,20 +162,20 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         new_task = self.model_copy()
         assert new_task.details
         if self.details.shift:
-            new_task.details.next_ = self.details.interval.apply(
+            new_task.details.due = self.details.interval.apply(
                 datetime.date.today() - datetime.timedelta(days=ago)
             )
         else:
-            next_ = self.details.interval.apply(self.details.next_)
-            while next_ <= datetime.date.today():
-                next_ = self.details.interval.apply(next_)
-            new_task.details.next_ = next_
+            due = self.details.interval.apply(self.details.due)
+            while due <= datetime.date.today():
+                due = self.details.interval.apply(due)
+            new_task.details.due = due
         return new_task
 
     def delay(self, days: int) -> Self:
         new_task = self.model_copy()
         if not new_task.details:
-            details = {'next': datetime.date.today()}
+            details = {'due': datetime.date.today()}
             new_task.details = schedule.Details.model_validate(details)
         elif self.details:
             if self.details.interval and not self.details.shift:
@@ -185,7 +185,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         else:
             assert False, 'impossible task state'
 
-        new_task.details.next_ = datetime.date.today() + datetime.timedelta(
+        new_task.details.due = datetime.date.today() + datetime.timedelta(
             days=days
         )
         return new_task
@@ -196,7 +196,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         summary: str | None = None,
         namespace: str | None = None,
         tag: str | None = None,
-        next_: str | None = None,
+        due: str | None = None,
         interval: str | None = None,
         shift: bool | None = None,
         description: str | None = None,
@@ -213,8 +213,8 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         if description is not None:
             self.description = description.strip() or None
         self._set_metadata(link, priority, size)
-        if next_ is not None or interval is not None or shift is not None:
-            self._schedule(next_, interval, shift)
+        if due is not None or interval is not None or shift is not None:
+            self._schedule(due, interval, shift)
 
     def _set_metadata(
         self, link: str | None, priority: str | None, size: str | None
@@ -227,13 +227,13 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             self.size = parse_enum(Size, size)
 
     def _schedule(
-        self, next_: str | None, interval: str | None, shift: bool | None
+        self, due: str | None, interval: str | None, shift: bool | None
     ) -> None:
         if self.details is None:
-            seed = next_ or datetime.date.today().isoformat()
-            self.details = schedule.Details.model_validate({'next': seed})
-        if next_ is not None:
-            self.details.next_ = datetime.date.fromisoformat(next_)
+            seed = due or datetime.date.today().isoformat()
+            self.details = schedule.Details.model_validate({'due': seed})
+        if due is not None:
+            self.details.due = datetime.date.fromisoformat(due)
         if interval is not None:
             self.details.interval = schedule.Interval(raw=interval)
         if shift is not None:
@@ -312,7 +312,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
 
     def clear(self, fields: Iterable['ClearableField']) -> None:
         for field in fields:
-            if field is ClearableField.next:
+            if field is ClearableField.due:
                 self.details = None
             elif field in OPTIONAL_FIELDS:
                 setattr(self, field.value, None)
@@ -395,7 +395,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             ),
             'blocks': [inbound.to_json() for inbound in self.blocks],
             'duplicates': [inbound.to_json() for inbound in self.duplicates],
-            'next': self.details.next_.isoformat() if self.details else None,
+            'due': self.details.due.isoformat() if self.details else None,
             'interval': interval.raw if interval else None,
             'shift': bool(self.details and self.details.shift),
             'created': timestamp.serialize(self.created),
@@ -404,14 +404,14 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
 
     def _render_due(self) -> str:
         assert self.details, 'due row requires details'
-        diff = (self.details.next_ - datetime.date.today()).days
+        diff = (self.details.due - datetime.date.today()).days
         if diff > 0:
             status = f'{diff} {"day" if diff == 1 else "days"}'
         elif diff == 0:
             status = 'due today'
         else:
             status = 'overdue'
-        return f'{self.details.next_} ({status})'
+        return f'{self.details.due} ({status})'
 
 
 def _check_force(actor: actors.Actor, force: bool) -> None:
@@ -421,10 +421,10 @@ def _check_force(actor: actors.Actor, force: bool) -> None:
 
 class ClearableField(enum.StrEnum):
     description = 'description'
+    due = 'due'
     duplicate_of = 'duplicate_of'
     interval = 'interval'
     link = 'link'
-    next = 'next'
     priority = 'priority'
     shift = 'shift'
     size = 'size'

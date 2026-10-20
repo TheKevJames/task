@@ -26,7 +26,7 @@ class Target(enum.StrEnum):
     link = 'link'
     priority = 'priority'
     size = 'size'
-    next = 'next'
+    due = 'due'
     questions = 'questions'
     blocked = 'blocked'
 
@@ -43,7 +43,7 @@ COLUMNS = {
     Target.link: "fold(coalesce(link, ''))",
     Target.priority: "coalesce(priority, '')",
     Target.size: "coalesce(size, '')",
-    Target.next: "coalesce(next, '')",
+    Target.due: "coalesce(due, '')",
 }
 OPEN = 'open'
 # Whether a task has any question without an answer: `questions=open`.
@@ -63,7 +63,7 @@ BLOCKED = (
     ' WHERE blocker.namespace = task.namespace AND blocker.task = task.id)'
 )
 BLOCKED_SQL = {'yes': BLOCKED, 'no': f'NOT {BLOCKED}', 'any': 'TRUE'}
-# A year or month, which `next^=` also takes.
+# A year or month, which `due^=` also takes.
 DATE_PREFIX_RE = re.compile(r'[0-9]{4}(?:-(?:0[1-9]|1[0-2]))?')
 
 
@@ -109,17 +109,17 @@ class Filter(pydantic.BaseModel, extra='forbid'):
         return self
 
     @pydantic.model_validator(mode='after')
-    def check_next(self) -> Self:
+    def check_due(self) -> Self:
         """
         Dates match as stored: YYYY-MM-DD, or empty if unset; a prefix may
         also be a year or month.
         """
-        if self.target is not Target.next:
+        if self.target is not Target.due:
             return self
         if self.match is Match.contains:
             raise errors.TaskError(
-                'next only supports exact and prefix matches'
-                ' (use eg. next=2026-01-31, next^=2026-01, next=)'
+                'due only supports exact and prefix matches'
+                ' (use eg. due=2026-01-31, due^=2026-01, due=)'
             )
         if self.match is Match.prefix and DATE_PREFIX_RE.fullmatch(self.data):
             return self
@@ -182,12 +182,12 @@ class SortOrder(enum.StrEnum):
 # Ids repeat across namespaces, so every order ends on both.
 ORDER_BY = {
     SortOrder.created: 'created, id, namespace',
-    SortOrder.due: 'next IS NOT NULL, next, id, namespace',
+    SortOrder.due: 'due IS NOT NULL, due, id, namespace',
     SortOrder.ident: 'id, namespace',
     SortOrder.priority: (
         "CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1"
         " WHEN 'low' THEN 2 ELSE 3 END,"
-        ' next IS NULL, next, id, namespace'
+        ' due IS NULL, due, id, namespace'
     ),
     SortOrder.tag: (
         f"namespace != '{refs.DEFAULT}', namespace,"
@@ -219,7 +219,7 @@ def compile_(
         clauses.append(BLOCKED_SQL['no'])
     if days >= 0:
         target = datetime.date.today() + datetime.timedelta(days=days)
-        clauses.append('(next IS NULL OR next <= :target)')
+        clauses.append('(due IS NULL OR due <= :target)')
         params['target'] = target.isoformat()
     if unclaimed:
         clauses.append('claim IS NULL')
