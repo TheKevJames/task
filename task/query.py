@@ -23,6 +23,7 @@ class Target(enum.StrEnum):
     size = 'size'
     next = 'next'
     questions = 'questions'
+    blocked = 'blocked'
 
 
 # Filter values are compared lowercased. `fold` is Python's str.lower,
@@ -49,6 +50,15 @@ OPEN_QUESTIONS = (
 )
 
 
+# Whether a task waits on anything: `blocked=yes`, `blocked=no` (the default),
+# or `blocked=any`.
+BLOCKED = (
+    'EXISTS (SELECT 1 FROM blocker'
+    ' WHERE blocker.namespace = task.namespace AND blocker.task = task.id)'
+)
+BLOCKED_SQL = {'yes': BLOCKED, 'no': f'NOT {BLOCKED}', 'any': 'TRUE'}
+
+
 class Filter(pydantic.BaseModel, extra='forbid'):
     data: str
     negate: bool
@@ -63,6 +73,16 @@ class Filter(pydantic.BaseModel, extra='forbid'):
             raise errors.TaskError(
                 f'questions only supports {OPEN}'
                 f' (use questions={OPEN} or questions!={OPEN})'
+            )
+        return self
+
+    @pydantic.model_validator(mode='after')
+    def check_blocked(self) -> Self:
+        if self.target is Target.blocked and (
+            self.contains or self.data not in BLOCKED_SQL
+        ):
+            raise errors.TaskError(
+                'blocked only supports yes, no, or any (use eg. blocked=yes)'
             )
         return self
 
@@ -113,6 +133,8 @@ class Filter(pydantic.BaseModel, extra='forbid'):
         value = f':{param}'
         if self.target is Target.questions:
             clause = OPEN_QUESTIONS
+        elif self.target is Target.blocked:
+            clause = BLOCKED_SQL[self.data]
         elif self.contains:
             clause = f'instr({COLUMNS[self.target]}, {value}) > 0'
         else:
@@ -156,12 +178,18 @@ def compile_(
     scheduled: bool = False,
     unclaimed: bool = False,
 ) -> tuple[str, dict[str, object]]:
-    """The WHERE, ORDER BY, and LIMIT clauses selecting tasks, and params."""
+    """
+    The WHERE, ORDER BY, and LIMIT clauses selecting tasks, and params;
+    blocked tasks only if `filter_` asks for them.
+    """
     clauses: list[str] = []
     params: dict[str, object] = {}
-    for i, filter_part in enumerate(Filter.parse(filter_)):
+    filters = list(Filter.parse(filter_))
+    for i, filter_part in enumerate(filters):
         clauses.append(filter_part.sql(f'filter{i}'))
         params[f'filter{i}'] = filter_part.data
+    if all(f.target is not Target.blocked for f in filters):
+        clauses.append(BLOCKED_SQL['no'])
     if days >= 0:
         target = datetime.date.today() + datetime.timedelta(days=days)
         clauses.append('(next IS NULL OR next <= :target)')

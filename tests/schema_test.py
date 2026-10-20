@@ -7,10 +7,11 @@ from hypothesis import strategies as st
 
 from task import errors
 from task import refs
+from task import schedule
 from task import schema
 
 INTERVAL = st.builds(
-    lambda count, unit: schema.Interval(raw=f'{count}{unit}'),
+    lambda count, unit: schedule.Interval(raw=f'{count}{unit}'),
     st.integers(1, 99),
     st.sampled_from('dwm'),
 )
@@ -29,7 +30,7 @@ DATE = ANY_DATE | ANY_DATE.map(month_end)
 
 @hypothesis.given(INTERVAL, DATE)
 def test_interval_moves_forward(
-    interval: schema.Interval, date: datetime.date
+    interval: schedule.Interval, date: datetime.date
 ) -> None:
     assert interval.apply(date) > date
 
@@ -40,13 +41,13 @@ def test_interval_moves_forward(
     st.integers(-1000, 1000),
 )
 def test_marking_a_fixed_recurrence_as_done_moves_past_today(
-    interval: schema.Interval, today: datetime.date, offset: int
+    interval: schedule.Interval, today: datetime.date, offset: int
 ) -> None:
     next_ = today + datetime.timedelta(days=offset)
     task = schema.Task(
         summary='a',
         tag='a',
-        details=schema.Details.model_validate(
+        details=schedule.Details.model_validate(
             {'next': next_, 'interval': interval}
         ),
     )
@@ -91,4 +92,4 @@ def test_normalize_name_is_idempotent(value: str) -> None:
     ],
 )
 def test_interval_renders(raw: str, rendered: str) -> None:
-    assert str(schema.Interval(raw=raw)) == rendered
+    assert str(schedule.Interval(raw=raw)) == rendered

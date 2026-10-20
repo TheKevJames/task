@@ -16,6 +16,7 @@ from task import db
 from task import errors
 from task import query
 from task import refs
+from task import schedule
 from task import schema
 
 NAME = st.text(string.ascii_letters + string.digits, min_size=1, max_size=8)
@@ -76,9 +77,9 @@ PRIORITY_RANK = {
 
 def details(
     dates: st.SearchStrategy[datetime.date],
-) -> st.SearchStrategy[schema.Details | None]:
+) -> st.SearchStrategy[schedule.Details | None]:
     return st.none() | st.builds(
-        lambda next_, interval, shift: schema.Details.model_validate(
+        lambda next_, interval, shift: schedule.Details.model_validate(
             {
                 'next': next_,
                 'interval': interval and {'raw': interval},

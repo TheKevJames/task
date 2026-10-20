@@ -59,3 +59,27 @@ answers, by the question's number:
     $ task 3 set --answer 'Q1: pin it' --comment 'see the build log'
 
 Tasks with no open questions are ``-f questions!=open``.
+
+Relations
+---------
+
+A task may wait on others, or on something outside the task list: on another
+task's current occurrence being marked as done, on another task being decided
+(out of triage, not blocked, and with no open questions), or on a condition at
+a URL, which only someone removing it can clear. A task for the same work as
+another is its duplicate, and goes once that one is done:
+
+.. code-block:: console
+
+    $ task 4 set --blocked-by bakery:184:decided --blocked-by 2
+    $ task 5 set --blocked-by 'https://github.com/a/b/issues/4: closed'
+    $ task 6 set --duplicate-of 3
+    $ task list -f blocked=yes
+
+Blocked tasks are hidden from ``list``, ``due``, and ``next`` unless asked for
+(``-f blocked=yes`` or ``-f blocked=any``), and marked ``×`` when shown. Once
+all a task waits on has cleared, ``task`` moves it back to triage, saying so in
+a comment. ``task 5 unset --blocked-by https://github.com/a/b/issues/4`` clears
+a blocker, and ``task 6 unset duplicate_of`` makes a duplicate a task of its
+own again. ``task`` refuses relations to tasks which do not exist, which could
+never clear, or which would make tasks wait on each other.

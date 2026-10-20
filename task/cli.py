@@ -21,6 +21,7 @@ from . import client
 from . import db
 from . import errors
 from . import ops
+from . import options
 from . import query
 from . import refs
 from . import rules
@@ -82,68 +83,6 @@ def main() -> None:
     """Simple personal task manager, shared by an operator and agents."""
 
 
-Ago = Annotated[int, typer.Option('-a', '--ago')]
-Days = Annotated[int, typer.Option('-d', '--days')]
-Filter = Annotated[
-    str,
-    typer.Option('-f', '--filter', help='namespace=foo,tag=bar,summary!~bq'),
-]
-Limit = Annotated[int, typer.Option('-l', '--limit')]
-Sort = Annotated[query.SortOrder, typer.Option('-s', '--sort')]
-AsJson = Annotated[bool, typer.Option('--json', help='Machine-readable.')]
-
-Ref = Annotated[
-    refs.Ref,
-    typer.Argument(metavar='ID', parser=refs.Ref.parse, help='[namespace:]id'),
-]
-NamespaceName = Annotated[str, typer.Argument(metavar='NAMESPACE')]
-
-# Shared detail flags: `add` and `set` funnel these into Task.update, keeping a
-# single source of truth for task modifications.
-Summary = Annotated[str | None, typer.Option('--summary')]
-AddNamespace = Annotated[str, typer.Option('-n', '--namespace')]
-MoveNamespace = Annotated[
-    str | None,
-    typer.Option(
-        '-n',
-        '--namespace',
-        help='Move the task here; it gets a new id, and keeps its claim.',
-    ),
-]
-Tag = Annotated[str | None, typer.Option('--tag', help='Section, eg. build')]
-Next = Annotated[str | None, typer.Option('--next')]
-Interval = Annotated[
-    str | None,
-    typer.Option(
-        '--interval',
-        help=(
-            'Repeat every N days, weeks, or months, eg. 3d, 2w, 1m. Months'
-            ' past the end of a shorter month land on its last day, and stay'
-            ' there: Jan 31, Feb 28, Mar 28.'
-        ),
-    ),
-]
-Shift = Annotated[bool | None, typer.Option('--shift/--no-shift')]
-Description = Annotated[str | None, typer.Option('--description')]
-# Said as whoever runs the command, and stamped with when; all repeatable.
-Said = list[str] | None
-Comments = Annotated[
-    Said, typer.Option('--comment', help='Say something on the task.')
-]
-Questions = Annotated[
-    Said, typer.Option('--question', help='Ask the operator.')
-]
-Answers = Annotated[
-    Said, typer.Option('--answer', help='Operator only, eg. "Q1: yes".')
-]
-Link = Annotated[str | None, typer.Option('--link')]
-PriorityOpt = Annotated[schema.Priority | None, typer.Option('--priority')]
-SizeOpt = Annotated[schema.Size | None, typer.Option('--size')]
-Force = Annotated[
-    bool, typer.Option('--force', help='Even if someone else has claimed it.')
-]
-
-
 # Per-task commands are invoked as `task <id> <cmd>`; group them under their
 # own help panel so they don't read as bare top-level commands.
 SUBJECT_PANEL = 'Task commands (use as: task <id> <cmd>)'
@@ -167,11 +106,11 @@ def report(task: schema.Task | None, as_json: bool, message: str = '') -> None:
 
 @app.command('list')
 def list_(
-    days: Days = -1,
-    filter_: Filter = '',
-    limit: Limit = -1,
-    sort: Sort = query.SortOrder.tag,
-    as_json: AsJson = False,
+    days: options.Days = -1,
+    filter_: options.Filter = '',
+    limit: options.Limit = -1,
+    sort: options.Sort = query.SortOrder.tag,
+    as_json: options.AsJson = False,
 ) -> None:
     """List all tasks."""
     clauses = query.compile_(filter_, days, limit, sort)
@@ -182,11 +121,11 @@ def list_(
 
 @app.command('due')
 def due(
-    days: Days = 0,
-    filter_: Filter = '',
-    limit: Limit = -1,
-    sort: Sort = query.SortOrder.due,
-    as_json: AsJson = False,
+    days: options.Days = 0,
+    filter_: options.Filter = '',
+    limit: options.Limit = -1,
+    sort: options.Sort = query.SortOrder.due,
+    as_json: options.AsJson = False,
 ) -> None:
     """List scheduled tasks due within the given number of days."""
     clauses = query.compile_(filter_, days, limit, sort, scheduled=True)
@@ -196,20 +135,22 @@ def due(
 
 
 @app.command('add')
-def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     summary: str,
-    namespace: AddNamespace = refs.DEFAULT,
-    tag: Tag = None,
-    next_: Next = None,
-    interval: Interval = None,
-    shift: Shift = None,
-    description: Description = None,
-    link: Link = None,
-    priority: PriorityOpt = None,
-    size: SizeOpt = None,
-    comment: Comments = None,
-    question: Questions = None,
-    as_json: AsJson = False,
+    namespace: options.AddNamespace = refs.DEFAULT,
+    tag: options.Tag = None,
+    next_: options.Next = None,
+    interval: options.Interval = None,
+    shift: options.Shift = None,
+    description: options.Description = None,
+    link: options.Link = None,
+    priority: options.PriorityOpt = None,
+    size: options.SizeOpt = None,
+    comment: options.Comments = None,
+    question: options.Questions = None,
+    blocked_by: options.BlockedBy = None,
+    duplicate_of: options.DuplicateOf = None,
+    as_json: options.AsJson = False,
 ) -> None:
     """Add a new task, optionally with schedule details."""
     task = schema.Task(
@@ -231,12 +172,15 @@ def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     task.converse(
         writer().actor, comments=comment or (), questions=question or ()
     )
+    task.relate(
+        writer().actor, blocked_by=blocked_by or (), duplicate_of=duplicate_of
+    )
     writer().add(task)
     report(task, as_json, f'added task {task.ref}: {task.summary}')
 
 
 @app.command('show', rich_help_panel=SUBJECT_PANEL)
-def show(ref: Ref, as_json: AsJson = False) -> None:
+def show(ref: options.Ref, as_json: options.AsJson = False) -> None:
     """Show a task's full details and status."""
     with db.connect() as store:
         task = db.get(store, ref)
@@ -245,7 +189,10 @@ def show(ref: Ref, as_json: AsJson = False) -> None:
 
 @app.command('done', rich_help_panel=SUBJECT_PANEL)
 def done(
-    ref: Ref, ago: Ago = 0, force: Force = False, as_json: AsJson = False
+    ref: options.Ref,
+    ago: options.Ago = 0,
+    force: options.Force = False,
+    as_json: options.AsJson = False,
 ) -> None:
     """Mark a task as done: delete it, or advance it if it recurs."""
     task, next_occurrence = writer().done(ref, ago, force=force)
@@ -263,7 +210,10 @@ def done(
 
 @app.command('delay', rich_help_panel=SUBJECT_PANEL)
 def delay(
-    ref: Ref, days: int, force: Force = False, as_json: AsJson = False
+    ref: options.Ref,
+    days: int,
+    force: options.Force = False,
+    as_json: options.AsJson = False,
 ) -> None:
     """Delay a task by the given number of days."""
     delayed = writer().change(
@@ -279,26 +229,28 @@ def delay(
 
 @app.command('set', rich_help_panel=SUBJECT_PANEL)
 def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    ref: Ref,
-    summary: Summary = None,
-    namespace: MoveNamespace = None,
-    tag: Tag = None,
-    next_: Next = None,
-    interval: Interval = None,
-    shift: Shift = None,
-    description: Description = None,
-    link: Link = None,
-    priority: PriorityOpt = None,
-    size: SizeOpt = None,
-    comment: Comments = None,
-    question: Questions = None,
-    answer: Answers = None,
-    force: Force = False,
-    as_json: AsJson = False,
+    ref: options.Ref,
+    summary: options.Summary = None,
+    namespace: options.MoveNamespace = None,
+    tag: options.Tag = None,
+    next_: options.Next = None,
+    interval: options.Interval = None,
+    shift: options.Shift = None,
+    description: options.Description = None,
+    link: options.Link = None,
+    priority: options.PriorityOpt = None,
+    size: options.SizeOpt = None,
+    comment: options.Comments = None,
+    question: options.Questions = None,
+    answer: options.Answers = None,
+    blocked_by: options.BlockedBy = None,
+    duplicate_of: options.DuplicateOf = None,
+    force: options.Force = False,
+    as_json: options.AsJson = False,
 ) -> None:
     """
-    Edit a task's summary, namespace, section, metadata, or schedule, or say
-    something on it.
+    Edit a task's summary, namespace, section, metadata, schedule, or what it
+    waits on, or say something on it.
     """
 
     def edit(task: schema.Task) -> schema.Task:
@@ -320,6 +272,11 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             questions=question or (),
             answers=answer or (),
         )
+        task.relate(
+            writer().actor,
+            blocked_by=blocked_by or (),
+            duplicate_of=duplicate_of,
+        )
         return task
 
     task = writer().change(ops.Verb.set, ref, edit, force=force)
@@ -328,7 +285,11 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
 
 @app.command('describe', rich_help_panel=SUBJECT_PANEL)
-def describe(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
+def describe(
+    ref: options.Ref,
+    force: options.Force = False,
+    as_json: options.AsJson = False,
+) -> None:
     """Edit a task's description in $EDITOR."""
     operator_only('describe')
     with db.connect() as store:
@@ -362,38 +323,55 @@ def describe(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
 
 @app.command('unset', rich_help_panel=SUBJECT_PANEL)
 def unset(
-    ref: Ref,
-    fields: list[schema.ClearableField],
-    force: Force = False,
-    as_json: AsJson = False,
+    ref: options.Ref,
+    fields: Annotated[
+        list[schema.ClearableField] | None, typer.Argument()
+    ] = None,
+    blocked_by: options.Cleared = None,
+    force: options.Force = False,
+    as_json: options.AsJson = False,
 ) -> None:
-    """Clear fields from a task."""
+    """
+    Clear fields from a task, or what it waits on: once it waits on nothing,
+    it goes back to triage.
+    """
+    if not (fields or blocked_by):
+        raise errors.TaskError('nothing to unset')
 
     def edit(task: schema.Task) -> schema.Task:
-        task.clear(fields)
+        task.clear(fields or ())
+        task.relate(writer().actor, cleared=blocked_by or ())
         return task
 
     report(writer().change(ops.Verb.unset, ref, edit, force=force), as_json)
 
 
 @app.command('claim', rich_help_panel=SUBJECT_PANEL)
-def claim(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
+def claim(
+    ref: options.Ref,
+    force: options.Force = False,
+    as_json: options.AsJson = False,
+) -> None:
     """Claim a task, so that no one else changes it."""
     report(writer().claim(ref, force=force), as_json)
 
 
 @app.command('release', rich_help_panel=SUBJECT_PANEL)
-def release(ref: Ref, force: Force = False, as_json: AsJson = False) -> None:
+def release(
+    ref: options.Ref,
+    force: options.Force = False,
+    as_json: options.AsJson = False,
+) -> None:
     """Release your claim on a task, or with --force anyone's."""
     report(writer().release(ref, force=force), as_json)
 
 
 @app.command('next')
 def next_task(
-    days: Days = 0,
-    filter_: Filter = '',
-    sort: Sort = query.SortOrder.priority,
-    as_json: AsJson = False,
+    days: options.Days = 0,
+    filter_: options.Filter = '',
+    sort: options.Sort = query.SortOrder.priority,
+    as_json: options.AsJson = False,
 ) -> None:
     """
     Show the highest-priority unclaimed task due within the given number of
@@ -414,14 +392,14 @@ def namespace_list() -> None:
 
 
 @namespace_app.command('add')
-def namespace_add(namespace: NamespaceName) -> None:
+def namespace_add(namespace: options.NamespaceName) -> None:
     """Add a namespace."""
     operator_only('namespace add')
     db.add_namespace(schema.normalize_name('namespace', namespace))
 
 
 @namespace_app.command('delete')
-def namespace_delete(namespace: NamespaceName) -> None:
+def namespace_delete(namespace: options.NamespaceName) -> None:
     """Delete an empty namespace."""
     operator_only('namespace delete')
     db.delete_namespace(schema.normalize_name('namespace', namespace))
