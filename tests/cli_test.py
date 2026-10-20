@@ -317,11 +317,22 @@ def test_invalid_filters_are_refused() -> None:
 
 
 @pytest.mark.usefixtures('folder')
-def test_fixed_recurrences_cannot_be_delayed() -> None:
-    run('add', 'a', '--due', '2026-01-01', '--interval', '1w')
-    assert refused('1', 'delay', '3') == (
-        'recurring tasks with fixed recurrence cannot be delayed'
+def test_delaying_a_fixed_recurrence_keeps_its_schedule() -> None:
+    run('add', 'a', '--due', '2026-01-12', '--interval', '1w')
+    assert run('1', 'delay', '2') == 'delayed task 1, due 2026-01-17\n'
+    assert listed()[0]['delayed_from'] == '2026-01-12'
+    assert run('list').endswith(
+        '\tDue: 2026-01-17 (delayed from 2026-01-12),'
+        ' repeats weekly since last deadline\n'
     )
+    assert '\nDue:         2026-01-17 (2 days, delayed from 2026-01-12)\n' in (
+        run('show', '1')
+    )
+    # Counted from the date it was due, not from the delay: not 2026-01-24.
+    assert run('1', 'done') == (
+        'completed recurring task 1, next due 2026-01-19\n'
+    )
+    assert listed()[0]['delayed_from'] is None
 
 
 def test_describe_saves_the_edit(

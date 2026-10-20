@@ -68,9 +68,18 @@ class Details(pydantic.BaseModel, extra='forbid'):
     interval: Interval | None = None
     due: datetime.date
     shift: bool = False
+    # For a fixed recurrence's delayed occurrence, the date it was due before
+    # any delay: the next occurrence counts from it.
+    delayed_from: datetime.date | None = None
+
+    @property
+    def fixed(self) -> bool:
+        return bool(self.interval) and not self.shift
 
     def __str__(self) -> str:
         result = f'Due: {self.due}'
+        if self.delayed_from:
+            result += f' (delayed from {self.delayed_from})'
 
         if self.interval:
             result += f', repeats {self.interval}'

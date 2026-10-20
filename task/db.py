@@ -41,6 +41,7 @@ WRITABLE = (
     'due',
     'interval',
     'shift',
+    'delayed_from',
     'claim',
     'link',
     'priority',
@@ -336,6 +337,11 @@ def _to_row(task: schema.Task) -> dict[str, object]:
         'due': details.due.isoformat() if details else None,
         'interval': interval.raw if interval else None,
         'shift': int(bool(details and details.shift)),
+        'delayed_from': (
+            details.delayed_from.isoformat()
+            if details and details.delayed_from
+            else None
+        ),
         'claim': task.claim,
         'link': task.link,
         'priority': task.priority,
@@ -356,6 +362,7 @@ def _to_task(
     due = fields.pop('due')
     interval = fields.pop('interval')
     shift = fields.pop('shift')
+    delayed_from = fields.pop('delayed_from')
     details = None
     if due is not None:
         details = schedule.Details.model_validate(
@@ -363,6 +370,7 @@ def _to_task(
                 'due': due,
                 'interval': None if interval is None else {'raw': interval},
                 'shift': bool(shift),
+                'delayed_from': delayed_from,
             }
         )
     relation = related.get((namespace, ident), relations.Relations())

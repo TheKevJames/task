@@ -325,4 +325,14 @@ MIGRATIONS: tuple[Migration, ...] = (
     description_files.migrate,
     # A task's due date was `next`; SQLite renames it in the CHECKs too.
     'ALTER TABLE task RENAME COLUMN next TO due',
+    # The date a fixed recurrence's delayed occurrence was due before any
+    # delay, which its next occurrence counts from.
+    """
+    ALTER TABLE task ADD COLUMN delayed_from TEXT CHECK (
+        delayed_from IS NULL OR (
+            date(delayed_from) IS delayed_from
+            AND interval IS NOT NULL AND shift = 0
+        )
+    )
+    """,
 )

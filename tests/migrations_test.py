@@ -18,10 +18,11 @@ from task import schema
 
 LegacyNamespace = Callable[..., pathlib.Path]
 CREATED = datetime.datetime(2000, 1, 1, tzinfo=datetime.UTC)
-# How many migrations task 9.0.0, 9.3.0, and 9.4.0 shipped.
+# How many migrations task 9.0.0, 9.3.0, 9.4.0, and 10.0.0 shipped.
 SHIPPED_9_0_0 = 11
 SHIPPED_9_3_0 = 29
 SHIPPED_9_4_0 = 31
+SHIPPED_10_0_0 = 32
 
 
 def test_8x_store_is_imported(
@@ -270,6 +271,34 @@ def test_9_4_0_next_is_renamed_due(monkeypatch: pytest.MonkeyPatch) -> None:
         None,
     ]
     assert after == before
+
+
+@pytest.mark.usefixtures('folder')
+def test_10_0_0_tasks_are_not_delayed(monkeypatch: pytest.MonkeyPatch) -> None:
+    shipped = migrations.MIGRATIONS
+    monkeypatch.setattr(migrations, 'MIGRATIONS', shipped[:SHIPPED_10_0_0])
+    with db.write() as store:
+        store.conn.execute(
+            'INSERT INTO task (namespace, id, summary, tag, due, interval,'
+            " shift) VALUES ('default', 1, 'a', 'a', '2026-01-12', '1w', 0),"
+            " ('default', 2, 'b', 'a', '2026-01-12', '1w', 1)"
+        )
+
+    monkeypatch.setattr(migrations, 'MIGRATIONS', shipped)
+    with db.connect() as store:
+        tasks = db.select(store, ' ORDER BY id')
+        store.conn.execute(
+            "UPDATE task SET delayed_from = '2026-01-05' WHERE id = 1"
+        )
+        # Only a fixed recurrence is ever delayed from a date.
+        with pytest.raises(sqlite3.IntegrityError):
+            store.conn.execute(
+                "UPDATE task SET delayed_from = '2026-01-05' WHERE id = 2"
+            )
+
+    print(tasks)
+    assert [t.summary for t in tasks] == ['a', 'b']
+    assert all(t.details and t.details.delayed_from is None for t in tasks)
 
 
 def test_newer_database_is_refused(folder: pathlib.Path) -> None:

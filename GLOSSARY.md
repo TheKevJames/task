@@ -62,7 +62,8 @@ _Avoid_: periodic, repeating
 One round of a recurring task, ending when it is marked as done.
 
 **Fixed recurrence**:
-Recurrence counted from each due date, whenever the task is marked as done.
+Recurrence counted from each due date, as it was before any delay, whenever
+the task is marked as done.
 _Avoid_: unshifted, since last deadline
 
 **Shifting recurrence**:

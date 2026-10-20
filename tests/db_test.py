@@ -72,16 +72,23 @@ def details(
     dates: st.SearchStrategy[datetime.date],
 ) -> st.SearchStrategy[schedule.Details | None]:
     return st.none() | st.builds(
-        lambda due, interval, shift: schedule.Details.model_validate(
-            {
-                'due': due,
-                'interval': interval and {'raw': interval},
-                'shift': shift,
-            }
+        lambda due, interval, shift, delayed_from: (
+            schedule.Details.model_validate(
+                {
+                    'due': due,
+                    'interval': interval and {'raw': interval},
+                    'shift': shift,
+                    # Only a fixed recurrence keeps the date it was due.
+                    'delayed_from': (
+                        None if shift or not interval else delayed_from
+                    ),
+                }
+            )
         ),
         dates,
         st.none() | INTERVAL,
         st.booleans(),
+        st.none() | dates,
     )
 
 
@@ -150,6 +157,10 @@ def test_save_load_roundtrip(tasks: list[schema.Task]) -> None:
         "due = '2026-01-01', interval = '1y'",
         "due = '2026-01-01', interval = '1x1d'",
         'shift = 1',
+        "due = '2026-01-01', delayed_from = '2026-01-01'",
+        "due = '2026-01-01', interval = '1d', delayed_from = '2026-1-1'",
+        "due = '2026-01-01', interval = '1d', shift = 1,"
+        " delayed_from = '2026-01-01'",
         "claim = 'a b'",
         "link = 'a b'",
         "priority = 'urgent'",

@@ -166,28 +166,28 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
                 datetime.date.today() - datetime.timedelta(days=ago)
             )
         else:
-            due = self.details.interval.apply(self.details.due)
-            while due <= datetime.date.today():
-                due = self.details.interval.apply(due)
-            new_task.details.due = due
+            due = self.details.delayed_from or self.details.due
+            next_ = self.details.interval.apply(due)
+            while next_ <= datetime.date.today():
+                next_ = self.details.interval.apply(next_)
+            new_task.details.due = next_
+            new_task.details.delayed_from = None
         return new_task
 
     def delay(self, days: int) -> Self:
+        """
+        Make its current occurrence due `days` from today; a fixed recurrence
+        keeps the date it was due, to count its next occurrence from.
+        """
         new_task = self.model_copy()
+        due = datetime.date.today() + datetime.timedelta(days=days)
         if not new_task.details:
-            details = {'due': datetime.date.today()}
+            details = {'due': due}
             new_task.details = schedule.Details.model_validate(details)
-        elif self.details:
-            if self.details.interval and not self.details.shift:
-                raise errors.TaskError(
-                    'recurring tasks with fixed recurrence cannot be delayed'
-                )
-        else:
-            assert False, 'impossible task state'
-
-        new_task.details.due = datetime.date.today() + datetime.timedelta(
-            days=days
-        )
+        elif new_task.details.fixed:
+            was = new_task.details.delayed_from or new_task.details.due
+            new_task.details.delayed_from = None if was == due else was
+        new_task.details.due = due
         return new_task
 
     def update(  # pylint: disable=too-many-arguments
@@ -233,11 +233,15 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             seed = due or datetime.date.today().isoformat()
             self.details = schedule.Details.model_validate({'due': seed})
         if due is not None:
+            # The occurrence is now due then, as if never delayed.
             self.details.due = datetime.date.fromisoformat(due)
+            self.details.delayed_from = None
         if interval is not None:
             self.details.interval = schedule.Interval(raw=interval)
         if shift is not None:
             self.details.shift = shift
+        if not self.details.fixed:
+            self.details.delayed_from = None
 
     def relate(
         self,
@@ -320,6 +324,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
                 continue
             elif field is ClearableField.interval:
                 self.details.interval = None
+                self.details.delayed_from = None
             elif field is ClearableField.shift:
                 self.details.shift = False
 
@@ -378,6 +383,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
 
     def to_json(self) -> dict[str, object]:
         interval = self.details.interval if self.details else None
+        delayed_from = self.details.delayed_from if self.details else None
         return {
             'id': self.ident,
             'namespace': self.namespace,
@@ -396,6 +402,9 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             'blocks': [inbound.to_json() for inbound in self.blocks],
             'duplicates': [inbound.to_json() for inbound in self.duplicates],
             'due': self.details.due.isoformat() if self.details else None,
+            'delayed_from': (
+                delayed_from.isoformat() if delayed_from else None
+            ),
             'interval': interval.raw if interval else None,
             'shift': bool(self.details and self.details.shift),
             'created': timestamp.serialize(self.created),
@@ -411,6 +420,8 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             status = 'due today'
         else:
             status = 'overdue'
+        if self.details.delayed_from:
+            status += f', delayed from {self.details.delayed_from}'
         return f'{self.details.due} ({status})'
 
 
