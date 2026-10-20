@@ -8,7 +8,7 @@ Installation
 
 .. code-block:: console
 
-    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@9.0.1'
+    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@9.1.0'
 
 Usage
 -----

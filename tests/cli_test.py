@@ -303,11 +303,12 @@ def test_invalid_filters_are_refused() -> None:
             'blocked only supports yes, no, or any (use eg. blocked=yes)'
         )
     assert refused('due', '-f', 'tag=a,summary') == (
-        "invalid filter: 'summary' (use eg. tag=a, tag!=a, tag~a, tag!~a)"
+        "invalid filter: 'summary'"
+        ' (use eg. tag=a, tag!=a, tag~a, tag!~a, tag^=a, tag!^=a)'
     )
     assert refused('list', '-f', 'next~2026') == (
-        'next only supports exact matches'
-        ' (use eg. next=2026-01-31, next!=2026-01-31, next=)'
+        'next only supports exact and prefix matches'
+        ' (use eg. next=2026-01-31, next^=2026-01, next=)'
     )
     assert refused('list', '-f', 'next=2026-1-31') == (
         "invalid date: '2026-1-31' (use eg. 2026-01-31)"
@@ -328,6 +329,10 @@ def test_filter_by_next() -> None:
     assert summaries('next=2026-01-31') == ['a']
     assert summaries('next=20260131') == ['a']
     assert summaries('next!=2026-01-31') == ['unscheduled', 'b']
+    assert summaries('next^=2026-01') == ['a']
+    assert summaries('next^=2026') == ['a', 'b']
+    assert summaries('next!^=2026-01') == ['unscheduled', 'b']
+    assert summaries('next^=') == ['unscheduled', 'a', 'b']
 
 
 @pytest.mark.usefixtures('folder')

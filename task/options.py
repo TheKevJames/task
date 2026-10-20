@@ -12,7 +12,9 @@ Ago = Annotated[int, typer.Option('-a', '--ago')]
 Days = Annotated[int, typer.Option('-d', '--days')]
 Filter = Annotated[
     str,
-    typer.Option('-f', '--filter', help='namespace=foo,tag=bar,summary!~bq'),
+    typer.Option(
+        '-f', '--filter', help='namespace=foo,tag=bar,summary!~bq,link^=https:'
+    ),
 ]
 Limit = Annotated[int, typer.Option('-l', '--limit')]
 Sort = Annotated[query.SortOrder, typer.Option('-s', '--sort')]
