@@ -158,7 +158,7 @@ FILTER = st.tuples(
     st.sampled_from(
         ['summary', 'namespace', 'tag', 'claim', 'link', 'priority', 'size']
     ),
-    st.sampled_from(['=', '!=', '~', '!~']),
+    st.sampled_from(['=', '!=', '~', '!~', '^=', '!^=']),
     FILTER_VALUE | FILTER_VALUE.map(str.upper),
 ) | st.tuples(
     st.just('questions'), st.sampled_from(['=', '!=']), st.just('open')
@@ -207,6 +207,8 @@ def reference_match(filter_: tuple[str, str, str], task: schema.Task) -> bool:
         matched = task.conversation.open_questions > 0
     elif op.endswith('~'):
         matched = value.lower() in candidate
+    elif op.endswith('^='):
+        matched = candidate.startswith(value.lower())
     else:
         matched = value.lower() == candidate
     return matched != op.startswith('!')
@@ -287,6 +289,7 @@ def test_query_matches_reference(  # pylint: disable=too-many-arguments
     expected.sort(key=lambda t: reference_key(order, t))
     if limit >= 0:
         expected = expected[:limit]
+    print(filter_)
     assert selected == [location(t) for t in expected]
 
 

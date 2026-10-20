@@ -57,18 +57,34 @@ BLOCKED = (
     ' WHERE blocker.namespace = task.namespace AND blocker.task = task.id)'
 )
 BLOCKED_SQL = {'yes': BLOCKED, 'no': f'NOT {BLOCKED}', 'any': 'TRUE'}
+# A year or month, which `next^=` also takes.
+DATE_PREFIX_RE = re.compile(r'[0-9]{4}(?:-(?:0[1-9]|1[0-2]))?')
+
+
+class Match(enum.StrEnum):
+    exact = '='
+    contains = '~'
+    prefix = '^='
+
+
+# `instr` finds an empty `data` at 1, so an empty prefix matches everything.
+MATCH_SQL = {
+    Match.exact: '{column} = {value}',
+    Match.contains: 'instr({column}, {value}) > 0',
+    Match.prefix: 'instr({column}, {value}) = 1',
+}
 
 
 class Filter(pydantic.BaseModel, extra='forbid'):
     data: str
     negate: bool
-    contains: bool
+    match: Match
     target: Target
 
     @pydantic.model_validator(mode='after')
     def check_questions(self) -> Self:
         if self.target is Target.questions and (
-            self.contains or self.data != OPEN
+            self.match is not Match.exact or self.data != OPEN
         ):
             raise errors.TaskError(
                 f'questions only supports {OPEN}'
@@ -79,7 +95,7 @@ class Filter(pydantic.BaseModel, extra='forbid'):
     @pydantic.model_validator(mode='after')
     def check_blocked(self) -> Self:
         if self.target is Target.blocked and (
-            self.contains or self.data not in BLOCKED_SQL
+            self.match is not Match.exact or self.data not in BLOCKED_SQL
         ):
             raise errors.TaskError(
                 'blocked only supports yes, no, or any (use eg. blocked=yes)'
@@ -88,14 +104,19 @@ class Filter(pydantic.BaseModel, extra='forbid'):
 
     @pydantic.model_validator(mode='after')
     def check_next(self) -> Self:
-        """Dates match exactly, as stored: YYYY-MM-DD, or empty if unset."""
+        """
+        Dates match as stored: YYYY-MM-DD, or empty if unset; a prefix may
+        also be a year or month.
+        """
         if self.target is not Target.next:
             return self
-        if self.contains:
+        if self.match is Match.contains:
             raise errors.TaskError(
-                'next only supports exact matches'
-                ' (use eg. next=2026-01-31, next!=2026-01-31, next=)'
+                'next only supports exact and prefix matches'
+                ' (use eg. next=2026-01-31, next^=2026-01, next=)'
             )
+        if self.match is Match.prefix and DATE_PREFIX_RE.fullmatch(self.data):
+            return self
         if self.data:
             try:
                 self.data = datetime.date.fromisoformat(self.data).isoformat()
@@ -111,21 +132,22 @@ class Filter(pydantic.BaseModel, extra='forbid'):
             if not filter_.strip():
                 continue
 
-            match = re.match(
-                r'(?P<target>[^!=~]+)(?P<op>!?[=~])(?P<data>.*)', filter_
+            parsed = re.match(
+                r'(?P<target>[^!=~^]+)(?P<negate>!?)(?P<match>=|~|\^=)'
+                r'(?P<data>.*)',
+                filter_,
             )
-            if not match:
+            if not parsed:
                 raise errors.TaskError(
                     f'invalid filter: {filter_!r}'
-                    ' (use eg. tag=a, tag!=a, tag~a, tag!~a)'
+                    ' (use eg. tag=a, tag!=a, tag~a, tag!~a, tag^=a, tag!^=a)'
                 )
-            op = match.group('op')
 
             yield cls(
-                data=match.group('data').lower(),
-                negate=op.startswith('!'),
-                contains=op.endswith('~'),
-                target=schema.parse_enum(Target, match.group('target')),
+                data=parsed.group('data').lower(),
+                negate=bool(parsed.group('negate')),
+                match=Match(parsed.group('match')),
+                target=schema.parse_enum(Target, parsed.group('target')),
             )
 
     def sql(self, param: str) -> str:
@@ -135,10 +157,10 @@ class Filter(pydantic.BaseModel, extra='forbid'):
             clause = OPEN_QUESTIONS
         elif self.target is Target.blocked:
             clause = BLOCKED_SQL[self.data]
-        elif self.contains:
-            clause = f'instr({COLUMNS[self.target]}, {value}) > 0'
         else:
-            clause = f'{COLUMNS[self.target]} = {value}'
+            clause = MATCH_SQL[self.match].format(
+                column=COLUMNS[self.target], value=value
+            )
         return f'NOT ({clause})' if self.negate else f'({clause})'
 
 
