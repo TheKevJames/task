@@ -8,7 +8,7 @@ Installation
 
 .. code-block:: console
 
-    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@9.2.0'
+    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@9.3.0'
 
 Usage
 -----
@@ -38,7 +38,7 @@ With ``$TASK_SERVER`` set to that socket, the agent's ``task`` runs every
 command on the server, as that agent. The socket's path is the agent's
 identity, so it must be one only that agent can reach. A program which knows
 when its agents start and stop instead embeds the server, with
-``task.cli.listen``, and its own checks as an ``ops.Guard``.
+``task.api.listen``, and its own checks as a ``task.api.Guard``.
 
 An agent claims every task it creates or changes, and may change only tasks
 which are unclaimed or its own; ``next`` claims the highest-priority unclaimed
@@ -93,3 +93,17 @@ a comment. ``task 5 unset --blocked-by https://github.com/a/b/issues/4`` clears
 a blocker, and ``task 6 unset duplicate_of`` makes a duplicate a task of its
 own again. ``task`` refuses relations to tasks which do not exist, which could
 never clear, or which would make tasks wait on each other.
+
+Library
+-------
+
+Programs reading or writing the task list in Python use ``task.api``; every
+other module is internal, and may change in any release.
+
+.. code-block:: python
+
+    from task import api
+
+    for task in api.list_('namespace=bakery,tag=triage,claim='):
+        print(task.ref, task.summary)
+    api.get(api.Ref.parse('bakery:3'))

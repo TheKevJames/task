@@ -30,6 +30,11 @@ The tag of tasks not yet sorted under any other; a new task's tag unless it
 is given one, and an unblocked task's.
 _Avoid_: inbox, backlog
 
+**Filter**:
+A condition picking out some of the task list's tasks by what they record,
+such as their namespace, tag or claim.
+_Avoid_: query, search
+
 ### Scheduling
 
 **Due date**:

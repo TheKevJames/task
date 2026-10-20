@@ -41,7 +41,7 @@ def test_filters_parse_or_are_refused(raw: str) -> None:
 
 
 # Values are cut from the task's own field, which tells matches apart far more
-# often than db_test.test_query_matches_reference's independent ones.
+# often than api_test.test_list_matches_reference's independent ones.
 @hypothesis.settings(deadline=None)
 @hypothesis.given(
     data=st.data(),

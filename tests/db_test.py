@@ -14,7 +14,6 @@ from task import actors
 from task import conversations
 from task import db
 from task import errors
-from task import query
 from task import refs
 from task import schedule
 from task import schema
@@ -67,12 +66,6 @@ CONVERSATION = st.builds(
     conversations.Conversation, entries=st.lists(ENTRY, max_size=4).map(tuple)
 )
 EPOCH = '2000-01-01T00:00:00Z'
-PRIORITY_RANK = {
-    schema.Priority.high: 0,
-    schema.Priority.medium: 1,
-    schema.Priority.low: 2,
-    None: 3,
-}
 
 
 def details(
@@ -104,64 +97,6 @@ TASK = st.builds(
     priority=st.none() | st.sampled_from(schema.Priority),
     size=st.none() | st.sampled_from(schema.Size),
     conversation=CONVERSATION,
-)
-
-QUERY_CONVERSATIONS = (
-    conversations.Conversation(),
-    conversations.Conversation(
-        entries=(conversations.Comment(actor='a', body='c'),)
-    ),
-    conversations.Conversation(
-        entries=(conversations.Question(actor='a', body='q'),)
-    ),
-    conversations.Conversation(
-        entries=(
-            conversations.Question(
-                actor='a',
-                body='q',
-                answer=conversations.Entry(actor=actors.OPERATOR, body='y'),
-            ),
-        )
-    ),
-)
-
-# Small alphabets, so that filters often match, and summaries non-ASCII case.
-QUERY_NAME = st.sampled_from(['a', 'a-b', 'b', schema.TRIAGE, refs.DEFAULT])
-
-
-def query_task(today: datetime.date) -> st.SearchStrategy[schema.Task]:
-    return st.builds(
-        schema.Task,
-        summary=st.text('aAbÉé ', min_size=1, max_size=3).filter(str.strip),
-        details=details(
-            st.dates(
-                today - datetime.timedelta(3), today + datetime.timedelta(5)
-            )
-        ),
-        namespace=st.sampled_from([refs.DEFAULT, 'a', 'b']),
-        tag=QUERY_NAME,
-        claim=st.sampled_from([None, 'a', 'A', 'b/c']),
-        link=st.sampled_from([None, 'a', 'A/b']),
-        priority=st.none() | st.sampled_from(schema.Priority),
-        size=st.none() | st.sampled_from(schema.Size),
-        conversation=st.sampled_from(QUERY_CONVERSATIONS),
-    )
-
-
-FILTER_VALUE = (
-    st.sampled_from(['', 'high', 'small'])
-    | QUERY_NAME
-    | st.text('aAbÉé-! ', max_size=4)
-)
-# (field, operator, value): `list -f` syntax, joined only when queried.
-FILTER = st.tuples(
-    st.sampled_from(
-        ['summary', 'namespace', 'tag', 'claim', 'link', 'priority', 'size']
-    ),
-    st.sampled_from(['=', '!=', '~', '!~', '^=', '!^=']),
-    FILTER_VALUE | FILTER_VALUE.map(str.upper),
-) | st.tuples(
-    st.just('questions'), st.sampled_from(['=', '!=']), st.just('open')
 )
 
 
@@ -198,99 +133,6 @@ def test_save_load_roundtrip(tasks: list[schema.Task]) -> None:
             loaded = db.select(conn, ' ORDER BY namespace, id')
 
     assert loaded == sorted(tasks, key=location)
-
-
-def reference_match(filter_: tuple[str, str, str], task: schema.Task) -> bool:
-    field, op, value = filter_
-    candidate = str(getattr(task, field, '') or '').lower()
-    if field == 'questions':
-        matched = task.conversation.open_questions > 0
-    elif op.endswith('~'):
-        matched = value.lower() in candidate
-    elif op.endswith('^='):
-        matched = candidate.startswith(value.lower())
-    else:
-        matched = value.lower() == candidate
-    return matched != op.startswith('!')
-
-
-def reference_key(
-    order: query.SortOrder, task: schema.Task
-) -> tuple[object, ...]:
-    if order == query.SortOrder.tag:
-        return (
-            task.namespace != refs.DEFAULT,
-            task.namespace,
-            task.tag != schema.TRIAGE,
-            task.tag,
-            task.ident,
-        )
-    if order == query.SortOrder.due:
-        next_ = task.details.next_ if task.details else datetime.date.min
-        key: tuple[object, ...] = (task.details is not None, next_)
-    elif order == query.SortOrder.created:
-        assert task.created
-        key = (task.created,)
-    elif order == query.SortOrder.updated:
-        assert task.updated
-        key = (-task.updated.timestamp(),)
-    elif order == query.SortOrder.priority:
-        next_ = task.details.next_ if task.details else datetime.date.max
-        key = (PRIORITY_RANK[task.priority], task.details is None, next_)
-    else:
-        key = ()
-    return (*key, task.ident, task.namespace)
-
-
-# The clock stays stopped across examples, which is what they need.
-@hypothesis.settings(
-    max_examples=300,
-    deadline=None,
-    suppress_health_check=[hypothesis.HealthCheck.function_scoped_fixture],
-)
-@hypothesis.given(
-    data=st.data(),
-    filters=st.lists(FILTER, max_size=2),
-    days=st.integers(-1, 4),
-    limit=st.integers(-1, 4),
-    order=st.sampled_from(query.SortOrder),
-    scheduled=st.booleans(),
-    unclaimed=st.booleans(),
-)
-def test_query_matches_reference(  # pylint: disable=too-many-arguments
-    today: datetime.date,
-    data: st.DataObject,
-    filters: list[tuple[str, str, str]],
-    days: int,
-    limit: int,
-    order: query.SortOrder,
-    scheduled: bool,
-    unclaimed: bool,
-) -> None:
-    tasks = data.draw(st.lists(query_task(today), max_size=10))
-    filter_ = ','.join(''.join(f) for f in filters)
-    clauses = query.compile_(
-        filter_, days, limit, order, scheduled=scheduled, unclaimed=unclaimed
-    )
-    with task_folder():
-        store(tasks)
-        with db.connect() as conn:
-            selected = [location(t) for t in db.select(conn, *clauses)]
-
-    target = today + datetime.timedelta(days=days)
-    expected = [
-        t
-        for t in tasks
-        if all(reference_match(f, t) for f in filters)
-        and (days < 0 or not t.details or t.details.next_ <= target)
-        and (t.details or not scheduled)
-        and (t.claim is None or not unclaimed)
-    ]
-    expected.sort(key=lambda t: reference_key(order, t))
-    if limit >= 0:
-        expected = expected[:limit]
-    print(filter_)
-    assert selected == [location(t) for t in expected]
 
 
 @pytest.mark.parametrize(

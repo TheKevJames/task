@@ -316,26 +316,6 @@ def test_invalid_filters_are_refused() -> None:
 
 
 @pytest.mark.usefixtures('folder')
-def test_filter_by_next() -> None:
-    run('add', 'unscheduled')
-    run('add', 'a', '--next', '2026-01-31')
-    run('add', 'b', '--next', '2026-02-01')
-
-    def summaries(filter_: str) -> list[object]:
-        return [t['summary'] for t in listed(filter_)]
-
-    assert summaries('next=') == ['unscheduled']
-    assert summaries('next!=') == ['a', 'b']
-    assert summaries('next=2026-01-31') == ['a']
-    assert summaries('next=20260131') == ['a']
-    assert summaries('next!=2026-01-31') == ['unscheduled', 'b']
-    assert summaries('next^=2026-01') == ['a']
-    assert summaries('next^=2026') == ['a', 'b']
-    assert summaries('next!^=2026-01') == ['unscheduled', 'b']
-    assert summaries('next^=') == ['unscheduled', 'a', 'b']
-
-
-@pytest.mark.usefixtures('folder')
 def test_fixed_recurrences_cannot_be_delayed() -> None:
     run('add', 'a', '--next', '2026-01-01', '--interval', '1w')
     assert refused('1', 'delay', '3') == (

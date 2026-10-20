@@ -113,10 +113,7 @@ def list_(
     as_json: options.AsJson = False,
 ) -> None:
     """List all tasks."""
-    clauses = query.compile_(filter_, days, limit, sort)
-    with db.connect() as store:
-        tasks = db.select(store, *clauses)
-    print_tasks(tasks, as_json)
+    print_tasks(_listed(filter_, days, limit, sort), as_json)
 
 
 @app.command('due')
@@ -128,10 +125,18 @@ def due(
     as_json: options.AsJson = False,
 ) -> None:
     """List scheduled tasks due within the given number of days."""
-    clauses = query.compile_(filter_, days, limit, sort, scheduled=True)
-    with db.connect() as store:
-        tasks = db.select(store, *clauses)
-    print_tasks(tasks, as_json)
+    print_tasks(_listed(f'next!=,{filter_}', days, limit, sort), as_json)
+
+
+def _listed(
+    filter_: str, days: int, limit: int, sort: query.SortOrder
+) -> list[schema.Task]:
+    return query.list_(
+        filter_,
+        sort=sort,
+        limit=None if limit < 0 else limit,
+        due_within=None if days < 0 else days,
+    )
 
 
 @app.command('add')
@@ -182,8 +187,7 @@ def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too
 @app.command('show', rich_help_panel=SUBJECT_PANEL)
 def show(ref: options.Ref, as_json: options.AsJson = False) -> None:
     """Show a task's full details and status."""
-    with db.connect() as store:
-        task = db.get(store, ref)
+    task = query.get(ref)
     report(task, as_json, task.render_detail())
 
 
@@ -292,8 +296,7 @@ def describe(
 ) -> None:
     """Edit a task's description in $EDITOR."""
     operator_only('describe')
-    with db.connect() as store:
-        current = db.get(store, ref)
+    current = query.get(ref)
     current.authorize(writer().actor, force=force)
     original = current.description
 
