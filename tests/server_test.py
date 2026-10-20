@@ -9,7 +9,9 @@ import sysconfig
 import tempfile
 import threading
 import tomllib
+import types
 from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -20,6 +22,9 @@ from task import ops
 from task import rules
 from task import schema
 from task import server
+
+if TYPE_CHECKING:
+    import _typeshed
 
 TASK = pathlib.Path(sysconfig.get_path('scripts')) / 'task'
 AGENT = schema.Actor.agent('scout/daily')
@@ -145,10 +150,52 @@ def test_other_protocols_are_refused(address: pathlib.Path) -> None:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
         conn.connect(str(address))
         conn.sendall(b'{"protocol": 0, "argv": ["list"]}\n')
-        conn.shutdown(socket.SHUT_WR)
         line = conn.makefile('rb').readline()
 
     response = server.Response.decode(line)
     assert response.code == 2
     assert response.error is not None
     assert 'protocol 0 is not this task' in response.error
+
+
+def test_a_reply_is_read_after_the_server_closes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """
+    The server answers and closes as soon as it reads a request, which may
+    be before a busy client takes its next step.
+    """
+    closed = threading.Event()
+
+    class Lagging(socket.socket):
+        def sendall(
+            self, data: '_typeshed.ReadableBuffer', flags: int = 0, /
+        ) -> None:
+            super().sendall(data, flags)
+            assert closed.wait(10)
+
+    with (
+        tempfile.TemporaryDirectory(dir='/tmp') as sockets,
+        socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener,
+    ):
+        path = pathlib.Path(sockets) / 'task.sock'
+        listener.bind(str(path))
+        listener.listen()
+
+        def answer() -> None:
+            conn, _ = listener.accept()
+            with conn, conn.makefile('rb') as stream:
+                stream.readline()
+                conn.sendall(server.Response(0, 'ok\n').encode())
+            closed.set()
+
+        thread = threading.Thread(target=answer, daemon=True)
+        thread.start()
+        lagging = types.SimpleNamespace(**vars(socket) | {'socket': Lagging})
+        monkeypatch.setattr(client, 'socket', lagging)
+        code = client.forward(path, ['list'])
+        thread.join()
+
+    captured = capsys.readouterr()
+    print(captured)
+    assert (code, captured.out, captured.err) == (0, 'ok\n', '')

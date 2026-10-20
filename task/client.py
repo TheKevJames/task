@@ -27,9 +27,12 @@ def forward(path: pathlib.Path, argv: list[str]) -> int:
 
 
 def _exchange(path: pathlib.Path, line: bytes) -> server.Response:
+    # The server answers once it has read the line, then closes, so shutting
+    # down writes after sending could race that close: macOS refuses to shut
+    # down a connection its peer has closed (ENOTCONN), even with the
+    # response still unread.
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
         conn.connect(str(path))
         conn.sendall(line)
-        conn.shutdown(socket.SHUT_WR)
         with conn.makefile('rb') as stream:
             return server.Response.decode(stream.readline())
