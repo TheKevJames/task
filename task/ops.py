@@ -4,7 +4,12 @@ Every change to the task list, made as an actor.
 Each runs in a single write transaction, so a claim's compare-and-set and the
 change it guards cannot interleave with another writer's. An agent claims
 every task it creates or changes; the operator never claims implicitly, and
-changes only tasks which are unclaimed or their own, unless forced.
+changes only tasks which are unclaimed or their own, unless forced. Saying
+something on a task is not changing it: a change which only adds to a task's
+conversation neither needs nor takes a claim.
+
+Whatever is said is said by the writer's actor, and stamped by the store;
+nothing already said may change, but for the operator answering a question.
 
 A writer's guard sees each change before it is stored, and refuses it by
 raising TaskError; it may only allow or refuse, never alter, a change.
@@ -15,6 +20,7 @@ import enum
 from collections.abc import Callable
 
 from . import actors
+from . import conversations
 from . import db
 from . import errors
 from . import query
@@ -65,7 +71,7 @@ class Writer:
         if not self.actor.is_operator:
             task.claim = self.actor.name
         with db.write() as store:
-            self.guard(Change(self.actor, Verb.add, None, task, store))
+            self._judge(Change(self.actor, Verb.add, None, task, store))
             db.insert(store, task)
 
     def change(
@@ -77,10 +83,13 @@ class Writer:
         """
         with db.write() as store:
             before = db.get(store, ref)
-            task = before.model_copy(deep=True)
-            task.authorize(self.actor, force=force)
-            after = edit(task)
-            self.guard(Change(self.actor, verb, before, after, store))
+            after = edit(before.model_copy(deep=True))
+            if not _only_converses(before, after):
+                # Authorized as it was, so that refusals name it as it was.
+                task = before.model_copy()
+                task.authorize(self.actor, force=force)
+                after.claim = task.claim
+            self._judge(Change(self.actor, verb, before, after, store))
             if after.namespace == ref.namespace:
                 db.update(store, after)
             else:
@@ -96,7 +105,7 @@ class Writer:
             task = before.model_copy(deep=True)
             task.authorize(self.actor, force=force)
             after = task.done(ago)
-            self.guard(Change(self.actor, Verb.done, before, after, store))
+            self._judge(Change(self.actor, Verb.done, before, after, store))
             if after is None:
                 db.delete(store, ref)
             else:
@@ -137,7 +146,7 @@ class Writer:
                 after.claim_as(self.actor)
                 change = Change(self.actor, Verb.next, before, after, store)
                 try:
-                    self.guard(change)
+                    self._judge(change)
                 except errors.TaskError:
                     continue
                 db.update(store, after)
@@ -150,6 +159,24 @@ class Writer:
         with db.write() as store:
             before = db.get(store, ref)
             after = edit(before.model_copy(deep=True))
-            self.guard(Change(self.actor, verb, before, after, store))
+            self._judge(Change(self.actor, verb, before, after, store))
             db.update(store, after)
         return after
+
+    def _judge(self, change: Change) -> None:
+        if change.after is not None:
+            said = (
+                change.before.conversation
+                if change.before
+                else conversations.Conversation()
+            )
+            change.after.conversation.continues(said, self.actor)
+        self.guard(change)
+
+
+def _only_converses(before: schema.Task, after: schema.Task) -> bool:
+    return (
+        after.conversation != before.conversation
+        and after.model_copy(update={'conversation': before.conversation})
+        == before
+    )

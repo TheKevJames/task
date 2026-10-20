@@ -11,6 +11,7 @@ import pytest
 from hypothesis import strategies as st
 
 from task import actors
+from task import conversations
 from task import db
 from task import errors
 from task import query
@@ -42,6 +43,26 @@ INTERVAL = st.builds(
     lambda count, unit: f'{count}{unit}',
     st.integers(1, 99),
     st.sampled_from('dwm'),
+)
+SAID = st.text(string.ascii_letters + ' \n', max_size=12).filter(str.strip)
+SAID_BY = st.from_regex(actors.CLAIM_RE, fullmatch=True)
+ENTRY = st.builds(
+    conversations.Comment, actor=SAID_BY, body=SAID.map(str.strip)
+) | (
+    st.builds(
+        conversations.Question,
+        actor=SAID_BY,
+        body=SAID.map(str.strip),
+        answer=st.none()
+        | st.builds(
+            conversations.Entry,
+            actor=st.just(actors.OPERATOR),
+            body=SAID.map(str.strip),
+        ),
+    )
+)
+CONVERSATION = st.builds(
+    conversations.Conversation, entries=st.lists(ENTRY, max_size=4).map(tuple)
 )
 EPOCH = '2000-01-01T00:00:00Z'
 PRIORITY_RANK = {
@@ -80,6 +101,26 @@ TASK = st.builds(
     link=LINK,
     priority=st.none() | st.sampled_from(schema.Priority),
     size=st.none() | st.sampled_from(schema.Size),
+    conversation=CONVERSATION,
+)
+
+QUERY_CONVERSATIONS = (
+    conversations.Conversation(),
+    conversations.Conversation(
+        entries=(conversations.Comment(actor='a', body='c'),)
+    ),
+    conversations.Conversation(
+        entries=(conversations.Question(actor='a', body='q'),)
+    ),
+    conversations.Conversation(
+        entries=(
+            conversations.Question(
+                actor='a',
+                body='q',
+                answer=conversations.Entry(actor=actors.OPERATOR, body='y'),
+            ),
+        )
+    ),
 )
 
 # Small alphabets, so that filters often match, and summaries non-ASCII case.
@@ -101,6 +142,7 @@ def query_task(today: datetime.date) -> st.SearchStrategy[schema.Task]:
         link=st.sampled_from([None, 'a', 'A/b']),
         priority=st.none() | st.sampled_from(schema.Priority),
         size=st.none() | st.sampled_from(schema.Size),
+        conversation=st.sampled_from(QUERY_CONVERSATIONS),
     )
 
 
@@ -116,6 +158,8 @@ FILTER = st.tuples(
     ),
     st.sampled_from(['=', '!=', '~', '!~']),
     FILTER_VALUE | FILTER_VALUE.map(str.upper),
+) | st.tuples(
+    st.just('questions'), st.sampled_from(['=', '!=']), st.just('open')
 )
 
 
@@ -156,8 +200,10 @@ def test_save_load_roundtrip(tasks: list[schema.Task]) -> None:
 
 def reference_match(filter_: tuple[str, str, str], task: schema.Task) -> bool:
     field, op, value = filter_
-    candidate = str(getattr(task, field) or '').lower()
-    if op.endswith('~'):
+    candidate = str(getattr(task, field, '') or '').lower()
+    if field == 'questions':
+        matched = task.conversation.open_questions > 0
+    elif op.endswith('~'):
         matched = value.lower() in candidate
     else:
         matched = value.lower() == candidate

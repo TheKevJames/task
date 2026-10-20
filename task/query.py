@@ -21,6 +21,7 @@ class Target(enum.StrEnum):
     priority = 'priority'
     size = 'size'
     next = 'next'
+    questions = 'questions'
 
 
 # Filter values are compared lowercased. `fold` is Python's str.lower,
@@ -36,6 +37,15 @@ COLUMNS = {
     Target.size: "coalesce(size, '')",
     Target.next: "coalesce(next, '')",
 }
+OPEN = 'open'
+# Whether a task has any question without an answer: `questions=open`.
+OPEN_QUESTIONS = (
+    'EXISTS (SELECT 1 FROM entry AS asked'
+    ' WHERE asked.namespace = task.namespace AND asked.task = task.id'
+    " AND asked.kind = 'question' AND NOT EXISTS ("
+    '  SELECT 1 FROM entry AS answered WHERE answered.question = asked.id'
+    '))'
+)
 
 
 class Filter(pydantic.BaseModel, extra='forbid'):
@@ -43,6 +53,17 @@ class Filter(pydantic.BaseModel, extra='forbid'):
     negate: bool
     contains: bool
     target: Target
+
+    @pydantic.model_validator(mode='after')
+    def check_questions(self) -> Self:
+        if self.target is Target.questions and (
+            self.contains or self.data != OPEN
+        ):
+            raise errors.TaskError(
+                f'questions only supports {OPEN}'
+                f' (use questions={OPEN} or questions!={OPEN})'
+            )
+        return self
 
     @pydantic.model_validator(mode='after')
     def check_next(self) -> Self:
@@ -89,11 +110,12 @@ class Filter(pydantic.BaseModel, extra='forbid'):
     def sql(self, param: str) -> str:
         """A boolean expression comparing against `data`, bound to `param`."""
         value = f':{param}'
-        column = COLUMNS[self.target]
-        if self.contains:
-            clause = f'instr({column}, {value}) > 0'
+        if self.target is Target.questions:
+            clause = OPEN_QUESTIONS
+        elif self.contains:
+            clause = f'instr({COLUMNS[self.target]}, {value}) > 0'
         else:
-            clause = f'{column} = {value}'
+            clause = f'{COLUMNS[self.target]} = {value}'
         return f'NOT ({clause})' if self.negate else f'({clause})'
 
 

@@ -10,6 +10,7 @@ from typing import TypeVar
 import pydantic
 
 from . import actors
+from . import conversations
 from . import errors
 from . import timestamp
 
@@ -164,6 +165,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
     link: str | None = None
     priority: Priority | None = None
     size: Size | None = None
+    conversation: conversations.Conversation = conversations.Conversation()
     # Assigned by the store: see db.
     created: pydantic.AwareDatetime | None = None
     updated: pydantic.AwareDatetime | None = None
@@ -214,6 +216,8 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         result = f'{self.section}\t{self.ref}: {self.summary}'
         if self.description:
             result += ' +'
+        if self.conversation.open_questions:
+            result += f' ?{self.conversation.open_questions}'
         if self.priority:
             result += f' !{self.priority}'
         if self.claim:
@@ -270,15 +274,10 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         interval: str | None = None,
         shift: bool | None = None,
         description: str | None = None,
-        description_append: str | None = None,
         link: str | None = None,
         priority: str | None = None,
         size: str | None = None,
     ) -> None:
-        if description is not None and description_append is not None:
-            raise errors.TaskError(
-                '--description and --description-append are exclusive'
-            )
         if namespace is not None:
             self.namespace = normalize_name('namespace', namespace)
         if summary is not None:
@@ -287,8 +286,6 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             self.tag = normalize_name('tag', tag)
         if description is not None:
             self.description = description.strip() or None
-        if description_append is not None:
-            self._append_description(description_append)
         self._set_metadata(link, priority, size)
         if next_ is not None or interval is not None or shift is not None:
             self._schedule(next_, interval, shift)
@@ -316,14 +313,26 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         if shift is not None:
             self.details.shift = shift
 
-    def _append_description(self, text: str) -> None:
-        addition = text.strip()
-        if not addition:
-            return
-        if self.description:
-            self.description = f'{self.description}\n\n{addition}'
-        else:
-            self.description = addition
+    def converse(
+        self,
+        actor: actors.Actor,
+        *,
+        comments: Iterable[str] = (),
+        questions: Iterable[str] = (),
+        answers: Iterable[str] = (),
+    ) -> None:
+        """
+        Say something on this task, as `actor`. Answers come first, so that
+        they answer only questions asked before.
+        """
+        conversation = self.conversation
+        for answer in answers:
+            conversation = conversation.answer(actor, answer)
+        for comment in comments:
+            conversation = conversation.comment(actor, comment)
+        for question in questions:
+            conversation = conversation.ask(actor, question)
+        self.conversation = conversation
 
     def claim_as(self, actor: actors.Actor, *, force: bool = False) -> None:
         """Compare-and-set: only an unclaimed task may change hands."""
@@ -407,9 +416,8 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         header = '\n'.join(
             f'{label + ":":<{width + 2}} {value}' for label, value in rows
         )
-        if self.description:
-            return f'{header}\n---\n{self.description}'
-        return header
+        sections = [header, self.description, self.conversation.render()]
+        return '\n---\n'.join(section for section in sections if section)
 
     def to_json(self) -> dict[str, object]:
         interval = self.details.interval if self.details else None
@@ -423,6 +431,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             'priority': self.priority,
             'size': self.size,
             'description': self.description,
+            **self.conversation.to_json(),
             'next': self.details.next_.isoformat() if self.details else None,
             'interval': interval.raw if interval else None,
             'shift': bool(self.details and self.details.shift),

@@ -88,5 +88,27 @@ _Avoid_: permission, policy
 An actor's exclusive hold on a task. An agent claims every task it creates or
 changes, and may claim only what its rules allow; it may release its claims
 whenever it likes, and loses them all when it stops working. The operator
-changes only tasks no one else has claimed, unless they force it.
+changes only tasks no one else has claimed, unless they force it. Saying
+something on a task is not changing it, so needs no claim.
 _Avoid_: owner, claimant, assignee, lease, lock
+
+### Conversation
+
+**Comment**:
+Something an actor says on a task, stamped by the task list with who said it
+and when; it can never be changed or withdrawn.
+_Avoid_: note, remark
+
+**Question**:
+A request to the operator made on a task, numbered within it (`Q1`, `Q2`,
+...) and stamped like a comment.
+_Avoid_: ask, query
+
+**Answer**:
+The operator's one reply to a question, stamped like a comment; only the
+operator answers.
+_Avoid_: reply, response
+
+**Open question**:
+A question with no answer yet.
+_Avoid_: pending question, unanswered

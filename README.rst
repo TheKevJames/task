@@ -44,3 +44,18 @@ An agent claims every task it creates or changes, and may change only tasks
 which are unclaimed or its own; ``next`` claims the highest-priority unclaimed
 match for it. The operator changes only unclaimed tasks or their own, unless
 they ``--force`` it. See ``GLOSSARY.md`` and ``docs/adr/``.
+
+Conversation
+------------
+
+Anyone may comment on a task, or ask the operator a question on it, without
+claiming it; ``task`` stamps each with who said it and when. Only the operator
+answers, by the question's number:
+
+.. code-block:: console
+
+    $ task 3 set --question 'Pin binutils, or bump the toolchain?'
+    $ task list -f questions=open
+    $ task 3 set --answer 'Q1: pin it' --comment 'see the build log'
+
+Tasks with no open questions are ``-f questions!=open``.

@@ -25,8 +25,16 @@ namespaces = ["bakery"]
 tags = ["triage"]
 
 [triage.change]
-fields = ["description_append", "priority"]
+fields = ["priority"]
 tags = ["build", "triage"]
+
+[triage.comment]
+namespaces = ["bakery"]
+tags = ["triage", "build"]
+
+[triage.question]
+namespaces = ["bakery"]
+tags = ["build"]
 """
 AGENT = actors.Actor.agent('triage/task-1')
 
@@ -37,7 +45,6 @@ class Fields(TypedDict, total=False):
     tag: str
     next_: str
     description: str
-    description_append: str
     link: str
     priority: str
     size: str
@@ -83,6 +90,24 @@ def set_(**fields: Unpack[Fields]) -> Callable[[ops.Writer], object]:
     return lambda w: w.change(ops.Verb.set, ref('bakery:1'), edit)
 
 
+def say(
+    value: str,
+    *,
+    comments: tuple[str, ...] = (),
+    questions: tuple[str, ...] = (),
+) -> Callable[[ops.Writer], object]:
+    def edit(task: schema.Task) -> schema.Task:
+        task.converse(AGENT, comments=comments, questions=questions)
+        return task
+
+    return lambda w: w.change(ops.Verb.set, ref(value), edit)
+
+
+def asking(task: schema.Task) -> schema.Task:
+    task.converse(AGENT, questions=['q'])
+    return task
+
+
 @pytest.mark.parametrize(
     ('action', 'error'),
     [
@@ -99,7 +124,14 @@ def set_(**fields: Unpack[Fields]) -> Callable[[ops.Writer], object]:
         (lambda w: w.claim(ref('bakery:2')), 'claim tasks in bakery > build'),
         (set_(tag='build', priority='high'), None),
         (set_(tag='human'), 'you may not move tasks to human'),
-        (set_(description_append='more'), None),
+        (say('bakery:1', comments=('c',)), None),
+        (
+            say('bakery:1', questions=('q',)),
+            'ask questions on tasks in bakery > triage',
+        ),
+        (say('bakery:2', comments=('c',), questions=('q',)), None),
+        (lambda w: w.add(asking(new(link='l'))), 'ask questions on tasks in'),
+        (lambda w: w.add(asking(new(link='l', tag='build'))), None),
         (set_(description='other'), 'you may not change description'),
         (set_(summary='b'), 'you may not change summary'),
         (set_(namespace='default'), 'you may not move tasks to default'),
@@ -119,6 +151,21 @@ def test_rules_grant_only_what_they_name(
     assert stored('bakery:1').claim is None
 
 
+def test_saying_something_takes_no_claim() -> None:
+    # bakery:2 is in build, where the agent may ask but not claim.
+    agent().change(ops.Verb.set, ref('bakery:2'), asking)
+    assert stored('bakery:2').claim is None
+
+    def prioritized_asking(task: schema.Task) -> schema.Task:
+        return asking(_prioritized(task))
+
+    with pytest.raises(
+        errors.TaskError, match='claim tasks in bakery > build'
+    ):
+        agent().change(ops.Verb.set, ref('bakery:2'), prioritized_asking)
+    assert len(stored('bakery:2').conversation.questions) == 1
+
+
 def _unlinked(task: schema.Task) -> schema.Task:
     task.clear([schema.ClearableField.link])
     return task
@@ -129,6 +176,8 @@ def test_no_rules_deny_everything() -> None:
         lambda w: w.add(new(link='l')),
         lambda w: w.claim(ref('bakery:1')),
         set_(priority='high'),
+        say('bakery:1', comments=('c',)),
+        say('bakery:1', questions=('q',)),
     ]
     for action in actions:
         with pytest.raises(errors.TaskError, match='^you may not'):

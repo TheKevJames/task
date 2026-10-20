@@ -14,8 +14,8 @@ reused, so an orphan cannot attach itself to a different task.
 
 Marking a one-off task as done deletes it, with its description; recurring
 tasks advance instead. `created` and `updated` belong to the store, never to
-callers: every write which changes a task's row or description bumps
-`updated`. Editing a description file by hand does not.
+callers: every write which changes a task's row, description, or conversation
+bumps `updated`. Editing a description file by hand does not.
 """
 
 import contextlib
@@ -27,6 +27,7 @@ import sqlite3
 import uuid
 from collections.abc import Generator
 
+from . import conversations
 from . import errors
 from . import legacy
 from . import migrations
@@ -219,19 +220,34 @@ def _version(conn: sqlite3.Connection) -> int:
 def _migrate(conn: sqlite3.Connection) -> None:
     if _version(conn) == len(migrations.MIGRATIONS):
         return
-    with _transaction(conn):
-        for migration in migrations.MIGRATIONS[_version(conn) :]:
-            conn.execute(migration)
-        conn.execute(f'PRAGMA user_version = {len(migrations.MIGRATIONS)}')
+    # SQLite's procedure for changing a table's schema; foreign keys can only
+    # be turned off outside a transaction.
+    conn.execute('PRAGMA foreign_keys = OFF')
+    try:
+        with _transaction(conn):
+            for migration in migrations.MIGRATIONS[_version(conn) :]:
+                conn.execute(migration)
+            broken = conn.execute('PRAGMA foreign_key_check').fetchone()
+            if broken:
+                table, rowid, parent, _ = broken
+                raise errors.TaskError(
+                    f'migrating left {table} row {rowid} without its {parent}'
+                )
+            version = len(migrations.MIGRATIONS)
+            conn.execute(f'PRAGMA user_version = {version}')
+    finally:
+        conn.execute('PRAGMA foreign_keys = ON')
 
 
 def select(
     store: Store, clauses: str = '', params: dict[str, object] | None = None
 ) -> list[schema.Task]:
+    params = params or {}
     rows = store.conn.execute(
-        f'SELECT {", ".join(COLUMNS)} FROM task{clauses}', params or {}
-    )
-    return [_to_task(row) for row in rows]
+        f'SELECT {", ".join(COLUMNS)} FROM task{clauses}', params
+    ).fetchall()
+    said = conversations.load(store.conn, clauses, params)
+    return [_to_task(row, said) for row in rows]
 
 
 def get(store: Store, ref: schema.Ref) -> schema.Task:
@@ -258,6 +274,7 @@ def insert(store: Store, task: schema.Task) -> None:
         _to_row(task),
     ).fetchone()
     _write_description(task)
+    _store_conversation(store, task)
 
 
 def update(store: Store, task: schema.Task) -> None:
@@ -269,33 +286,44 @@ def update(store: Store, task: schema.Task) -> None:
     new = ', '.join(f':{column}' for column in fields)
     (task.updated,) = store.conn.execute(
         f'UPDATE task SET {assignments},'
-        f' updated = CASE WHEN :described OR ({old}) IS NOT ({new})'
-        f' THEN {NOW} ELSE updated END'
+        ' updated = CASE WHEN :described OR :conversed'
+        f' OR ({old}) IS NOT ({new}) THEN {NOW} ELSE updated END'
         ' WHERE namespace = :namespace AND id = :id RETURNING updated',
         _to_row(task)
-        | {'described': _read_description(task.ref) != task.description},
+        | {
+            'described': _read_description(task.ref) != task.description,
+            'conversed': conversations.unstamped(task.conversation),
+        },
     ).fetchone()
     _write_description(task)
+    _store_conversation(store, task)
 
 
 def move(store: Store, task: schema.Task, source: schema.Ref) -> None:
-    """Store a task, from `source`, under a new id in its namespace."""
+    """
+    Store a task, from `source`, under a new id in its namespace. Its key
+    changes in place, so whatever refers to it by key follows it there.
+    """
     assert task.namespace != source.namespace, 'task has not moved'
-    task.ident = None
-    insert(store, task)
-    (task.created,) = store.conn.execute(
-        'UPDATE task SET created = ('
-        '  SELECT created FROM task'
-        '   WHERE namespace = :source_namespace AND id = :source_id'
-        ') WHERE namespace = :namespace AND id = :id RETURNING created',
+    _require_namespace(store, task.namespace)
+    (task.ident,) = store.conn.execute(
+        f'UPDATE task SET namespace = :namespace, id = {NEXT_ID},'
+        f' updated = {NOW}'
+        ' WHERE namespace = :source_namespace AND id = :source_id'
+        ' RETURNING id',
         {
+            'namespace': task.namespace,
             'source_namespace': source.namespace,
             'source_id': source.ident,
-            'namespace': task.namespace,
-            'id': task.ident,
         },
     ).fetchone()
-    delete(store, source)
+    update(store, task)
+    _description_path(source).unlink(missing_ok=True)
+
+
+def _store_conversation(store: Store, task: schema.Task) -> None:
+    key = (task.ref.namespace, task.ref.ident)
+    task.conversation = conversations.store(store.conn, key, task.conversation)
 
 
 def delete(store: Store, ref: schema.Ref) -> None:
@@ -324,7 +352,10 @@ def _to_row(task: schema.Task) -> dict[str, object]:
     }
 
 
-def _to_task(row: tuple[object, ...]) -> schema.Task:
+def _to_task(
+    row: tuple[object, ...],
+    said: dict[conversations.Key, conversations.Conversation],
+) -> schema.Task:
     fields = dict(zip(COLUMNS, row, strict=True))
     namespace = fields['namespace']
     ident = fields.pop('id')
@@ -348,6 +379,9 @@ def _to_task(row: tuple[object, ...]) -> schema.Task:
             'ident': ident,
             'details': details,
             'description': _read_description(schema.Ref(namespace, ident)),
+            'conversation': said.get(
+                (namespace, ident), conversations.Conversation()
+            ),
         }
     )
 

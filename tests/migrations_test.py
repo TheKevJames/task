@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import pytest
 
+from task import conversations
 from task import db
 from task import errors
 from task import legacy
@@ -83,6 +84,69 @@ def test_outdated_8x_store_is_refused(
     assert current.exists()
     assert outdated.exists()
     assert sorted(p.name for p in folder.iterdir()) == ['b', schema.DEFAULT]
+
+
+def said_on(conversation: conversations.Conversation) -> schema.Task:
+    with db.write() as conn:
+        task = schema.Task(
+            summary='a', details=None, tag='a', conversation=conversation
+        )
+        db.insert(conn, task)
+    return task
+
+
+CONVERSATION = conversations.Conversation(
+    entries=(
+        conversations.Comment(actor='a', body='c'),
+        conversations.Question(
+            actor='a',
+            body='q',
+            answer=conversations.Entry(actor='operator', body='y'),
+        ),
+    )
+)
+
+
+@pytest.mark.usefixtures('folder')
+def test_rebuilding_a_table_keeps_what_refers_to_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = said_on(CONVERSATION)
+    with db.connect() as conn:
+        (sql,) = conn.conn.execute(
+            "SELECT sql FROM sqlite_schema WHERE name = 'task'"
+        ).fetchone()
+    rebuild = (
+        sql.replace('CREATE TABLE task', 'CREATE TABLE task_new', 1),
+        'INSERT INTO task_new SELECT * FROM task',
+        'DROP TABLE task',
+        'ALTER TABLE task_new RENAME TO task',
+    )
+    monkeypatch.setattr(
+        migrations, 'MIGRATIONS', (*migrations.MIGRATIONS, *rebuild)
+    )
+
+    with db.connect() as conn:
+        assert db.get(conn, task.ref) == task
+
+
+@pytest.mark.usefixtures('folder')
+def test_migrations_which_break_foreign_keys_are_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = said_on(CONVERSATION)
+    shipped = migrations.MIGRATIONS
+    monkeypatch.setattr(
+        migrations, 'MIGRATIONS', (*shipped, 'DELETE FROM task')
+    )
+
+    message = f'^{db.DATABASE}: migrating left entry row 1 without its task$'
+    with pytest.raises(errors.TaskError, match=message), db.connect():
+        pass
+
+    monkeypatch.setattr(migrations, 'MIGRATIONS', shipped)
+    with db.connect() as conn:
+        assert db.get(conn, task.ref) == task
 
 
 def test_newer_database_is_refused(folder: pathlib.Path) -> None:

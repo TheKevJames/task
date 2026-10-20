@@ -126,7 +126,17 @@ Interval = Annotated[
 ]
 Shift = Annotated[bool | None, typer.Option('--shift/--no-shift')]
 Description = Annotated[str | None, typer.Option('--description')]
-DescriptionAppend = Annotated[str | None, typer.Option('--description-append')]
+# Said as whoever runs the command, and stamped with when; all repeatable.
+Said = list[str] | None
+Comments = Annotated[
+    Said, typer.Option('--comment', help='Say something on the task.')
+]
+Questions = Annotated[
+    Said, typer.Option('--question', help='Ask the operator.')
+]
+Answers = Annotated[
+    Said, typer.Option('--answer', help='Operator only, eg. "Q1: yes".')
+]
 Link = Annotated[str | None, typer.Option('--link')]
 PriorityOpt = Annotated[schema.Priority | None, typer.Option('--priority')]
 SizeOpt = Annotated[schema.Size | None, typer.Option('--size')]
@@ -198,6 +208,8 @@ def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     link: Link = None,
     priority: PriorityOpt = None,
     size: SizeOpt = None,
+    comment: Comments = None,
+    question: Questions = None,
     as_json: AsJson = False,
 ) -> None:
     """Add a new task, optionally with schedule details."""
@@ -216,6 +228,9 @@ def add(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         link=link,
         priority=priority,
         size=size,
+    )
+    task.converse(
+        writer().actor, comments=comment or (), questions=question or ()
     )
     writer().add(task)
     report(task, as_json, f'added task {task.ref}: {task.summary}')
@@ -273,14 +288,19 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     interval: Interval = None,
     shift: Shift = None,
     description: Description = None,
-    description_append: DescriptionAppend = None,
     link: Link = None,
     priority: PriorityOpt = None,
     size: SizeOpt = None,
+    comment: Comments = None,
+    question: Questions = None,
+    answer: Answers = None,
     force: Force = False,
     as_json: AsJson = False,
 ) -> None:
-    """Edit a task's summary, namespace, section, metadata, or schedule."""
+    """
+    Edit a task's summary, namespace, section, metadata, or schedule, or say
+    something on it.
+    """
 
     def edit(task: schema.Task) -> schema.Task:
         task.update(
@@ -291,10 +311,15 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             interval=interval,
             shift=shift,
             description=description,
-            description_append=description_append,
             link=link,
             priority=priority,
             size=size,
+        )
+        task.converse(
+            writer().actor,
+            comments=comment or (),
+            questions=question or (),
+            answers=answer or (),
         )
         return task
 
