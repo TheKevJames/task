@@ -78,11 +78,7 @@ def set_(**fields: Unpack[Fields]) -> Callable[[ops.Writer], object]:
         task.update(**fields)
         return task
 
-    target = fields.get('namespace')
-    assert target is None or isinstance(target, str)
-    return lambda w: w.change(
-        ops.Verb.set, ref('bakery:1'), edit, target=target
-    )
+    return lambda w: w.change(ops.Verb.set, ref('bakery:1'), edit)
 
 
 @pytest.mark.parametrize(

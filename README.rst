@@ -13,7 +13,10 @@ Installation
 Usage
 -----
 
-Tasks are stored as files under ``$TASK_FOLDER``, one directory per namespace.
+Tasks are stored under ``$TASK_FOLDER``: every namespace in one database,
+``tasks.sqlite``, and each namespace's descriptions in a directory of its own.
+The first run of 9.x imports a store written by 8.x, so upgrade every device
+sharing ``$TASK_FOLDER`` before using any of them.
 
 .. code-block:: console
 

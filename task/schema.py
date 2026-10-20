@@ -15,7 +15,7 @@ from . import timestamp
 # agree.
 CLAIM_RE = re.compile(r'[A-Za-z0-9_./-]+')
 LINK_RE = re.compile(r'\S+')
-# Tags and namespaces; the tag CHECK in migrations must agree.
+# Tags and namespaces; their CHECKs in migrations must agree.
 NAME_RE = re.compile(r'[a-z0-9][a-z0-9_.-]*')
 REF_RE = re.compile(rf'(?:(?P<namespace>{NAME_RE.pattern}):)?(?P<id>\d+)')
 TRIAGE = 'triage'

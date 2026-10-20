@@ -296,10 +296,7 @@ def set_(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         )
         return task
 
-    target = None
-    if namespace is not None:
-        target = schema.normalize_name('namespace', namespace)
-    task = writer().change(ops.Verb.set, ref, edit, force=force, target=target)
+    task = writer().change(ops.Verb.set, ref, edit, force=force)
     moved = task.namespace != ref.namespace
     report(task, as_json, f'moved to {task.ref}' if moved else '')
 
