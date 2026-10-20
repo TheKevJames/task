@@ -45,21 +45,32 @@ def fixture_address(folder: pathlib.Path) -> Generator[pathlib.Path]:
     db.add_namespace('bakery')
     guard = rules.parse(tomllib.loads(RULES))['scout'].check
     loop = asyncio.new_event_loop()
-    listening = threading.Event()
     with tempfile.TemporaryDirectory(dir='/tmp') as sockets:
         path = pathlib.Path(sockets) / 'task.sock'
 
-        async def start() -> None:
-            await cli.listen(path, ops.Writer(AGENT, guard))
-            listening.set()
+        async def start() -> asyncio.Server:
+            return await cli.listen(path, ops.Writer(AGENT, guard))
 
         thread = threading.Thread(target=loop.run_forever, daemon=True)
         thread.start()
-        asyncio.run_coroutine_threadsafe(start(), loop).result()
-        assert listening.is_set()
+        listening = asyncio.run_coroutine_threadsafe(start(), loop).result()
         yield path
+        asyncio.run_coroutine_threadsafe(stop(listening), loop).result()
         loop.call_soon_threadsafe(loop.stop)
         thread.join()
+        loop.close()
+
+
+async def stop(listening: asyncio.Server) -> None:
+    """
+    Close the server, and let its handlers finish: a client which has its
+    reply moves on while the server is still closing the connection, and a
+    handler left pending in a stopped loop is destroyed, with an error, by
+    whichever later test happens to collect it.
+    """
+    listening.close()
+    await listening.wait_closed()
+    await asyncio.gather(*asyncio.all_tasks() - {asyncio.current_task()})
 
 
 def task(address: pathlib.Path, *args: str) -> subprocess.Popen[str]:
