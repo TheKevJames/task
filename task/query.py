@@ -1,4 +1,7 @@
-"""Selecting and ordering tasks: filters and sort orders, compiled to SQL."""
+"""
+Selecting and ordering tasks: filters and sort orders, compiled to SQL, and
+reading the tasks they select.
+"""
 
 import datetime
 import enum
@@ -8,6 +11,7 @@ from typing import Self
 
 import pydantic
 
+from . import db
 from . import errors
 from . import refs
 from . import schema
@@ -197,7 +201,6 @@ def compile_(
     limit: int,
     order: SortOrder,
     *,
-    scheduled: bool = False,
     unclaimed: bool = False,
 ) -> tuple[str, dict[str, object]]:
     """
@@ -216,8 +219,6 @@ def compile_(
         target = datetime.date.today() + datetime.timedelta(days=days)
         clauses.append('(next IS NULL OR next <= :target)')
         params['target'] = target.isoformat()
-    if scheduled:
-        clauses.append('next IS NOT NULL')
     if unclaimed:
         clauses.append('claim IS NULL')
 
@@ -227,3 +228,27 @@ def compile_(
         sql += ' LIMIT :limit'
         params['limit'] = limit
     return sql, params
+
+
+def list_(
+    filter_: str = '',
+    *,
+    sort: SortOrder = SortOrder.tag,
+    limit: int | None = None,
+    due_within: int | None = None,
+) -> list[schema.Task]:
+    """
+    Every task matching `filter_`, in `task list -f` syntax: blocked tasks
+    only if it asks for them (eg. `blocked=any`). With `due_within`, only
+    those unscheduled or due within that many days.
+    """
+    days = -1 if due_within is None else due_within
+    clauses = compile_(filter_, days, -1 if limit is None else limit, sort)
+    with db.connect() as store:
+        return db.select(store, *clauses)
+
+
+def get(ref: refs.Ref) -> schema.Task:
+    """One task; TaskError if there is no such task."""
+    with db.connect() as store:
+        return db.get(store, ref)
