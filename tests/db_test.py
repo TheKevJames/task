@@ -15,11 +15,12 @@ from task import conversations
 from task import db
 from task import errors
 from task import query
+from task import refs
 from task import schema
 
 NAME = st.text(string.ascii_letters + string.digits, min_size=1, max_size=8)
 TAG = st.from_regex(r'[a-z0-9][a-z0-9_.-]{0,7}', fullmatch=True)
-NAMESPACES = (schema.DEFAULT, 'b', 'c.d')
+NAMESPACES = (refs.DEFAULT, 'b', 'c.d')
 NAMESPACE = st.sampled_from(NAMESPACES)
 SUMMARY = st.text(
     st.characters(exclude_categories=['Cs'], exclude_characters='\n'),
@@ -124,7 +125,7 @@ QUERY_CONVERSATIONS = (
 )
 
 # Small alphabets, so that filters often match, and summaries non-ASCII case.
-QUERY_NAME = st.sampled_from(['a', 'a-b', 'b', schema.TRIAGE, schema.DEFAULT])
+QUERY_NAME = st.sampled_from(['a', 'a-b', 'b', schema.TRIAGE, refs.DEFAULT])
 
 
 def query_task(today: datetime.date) -> st.SearchStrategy[schema.Task]:
@@ -136,7 +137,7 @@ def query_task(today: datetime.date) -> st.SearchStrategy[schema.Task]:
                 today - datetime.timedelta(3), today + datetime.timedelta(5)
             )
         ),
-        namespace=st.sampled_from([schema.DEFAULT, 'a', 'b']),
+        namespace=st.sampled_from([refs.DEFAULT, 'a', 'b']),
         tag=QUERY_NAME,
         claim=st.sampled_from([None, 'a', 'A', 'b/c']),
         link=st.sampled_from([None, 'a', 'A/b']),
@@ -176,7 +177,7 @@ def task_folder() -> Generator[pathlib.Path]:
 
 def store(tasks: list[schema.Task]) -> None:
     namespaces = {task.namespace for task in tasks}
-    for namespace in namespaces - {schema.DEFAULT}:
+    for namespace in namespaces - {refs.DEFAULT}:
         db.add_namespace(namespace)
     with db.write() as conn:
         for task in tasks:
@@ -215,7 +216,7 @@ def reference_key(
 ) -> tuple[object, ...]:
     if order == query.SortOrder.tag:
         return (
-            task.namespace != schema.DEFAULT,
+            task.namespace != refs.DEFAULT,
             task.namespace,
             task.tag != schema.TRIAGE,
             task.tag,
@@ -408,7 +409,7 @@ def test_move_gives_a_new_id_and_keeps_the_rest(
 
 def operate(
     conn: db.Store, operation: tuple[str, str, int]
-) -> schema.Ref | None:
+) -> refs.Ref | None:
     """Apply `operation`, returning the ref it created, if any."""
     kind, namespace, pick = operation
     live = db.select(conn)
@@ -442,7 +443,7 @@ def operate(
     )
 )
 def test_ids_are_never_reused(operations: list[tuple[str, str, int]]) -> None:
-    seen: set[schema.Ref] = set()
+    seen: set[refs.Ref] = set()
     with task_folder():
         for namespace in NAMESPACES[1:]:
             db.add_namespace(namespace)
@@ -457,7 +458,7 @@ def test_ids_are_never_reused(operations: list[tuple[str, str, int]]) -> None:
 def test_only_empty_namespaces_may_be_deleted(folder: pathlib.Path) -> None:
     store([schema.Task(summary='a', details=None, tag='a', namespace='b')])
     for namespace, error in (
-        (schema.DEFAULT, 'cannot be deleted'),
+        (refs.DEFAULT, 'cannot be deleted'),
         ('b', 'not empty'),
         ('c', 'no such namespace'),
     ):
@@ -465,7 +466,7 @@ def test_only_empty_namespaces_may_be_deleted(folder: pathlib.Path) -> None:
             db.delete_namespace(namespace)
 
     with db.write() as conn:
-        db.delete(conn, schema.Ref('b', 1))
+        db.delete(conn, refs.Ref('b', 1))
     (folder / 'b').mkdir()
     (folder / 'b' / '9.txt').write_text('orphan')
     (folder / 'b' / '.9.txt.tmp').write_text('half written')
@@ -477,7 +478,7 @@ def test_only_empty_namespaces_may_be_deleted(folder: pathlib.Path) -> None:
     (folder / 'c' / 'unexpected').write_text('')
     with pytest.raises(errors.TaskError, match='^namespace c: '):
         db.delete_namespace('c')
-    assert db.namespaces() == ['c', schema.DEFAULT]
+    assert db.namespaces() == ['c', refs.DEFAULT]
     (folder / 'c' / 'unexpected').unlink()
     db.delete_namespace('c')
-    assert db.namespaces() == [schema.DEFAULT]
+    assert db.namespaces() == [refs.DEFAULT]

@@ -11,11 +11,12 @@ from task import db
 from task import errors
 from task import ops
 from task import query
+from task import refs
 from task import schema
 
 AGENTS = (actors.Actor.agent('a/1'), actors.Actor.agent('b/2'))
 ACTORS = (actors.OPERATOR_ACTOR, *AGENTS)
-REF = schema.Ref(schema.DEFAULT, 1)
+REF = refs.Ref(refs.DEFAULT, 1)
 
 
 class Op(enum.Enum):

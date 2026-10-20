@@ -3,7 +3,7 @@ The task store: one SQLite database, `$TASK_FOLDER/tasks.sqlite`, holding
 every namespace, plus one `<namespace>/<id>.txt` file per description.
 
 `default` always exists; other namespaces are added by `add_namespace`. Ids
-are unique only within a namespace, so a task's address is its `schema.Ref`,
+are unique only within a namespace, so a task's address is its `refs.Ref`,
 and moving a task to another namespace gives it a new id there.
 
 Descriptions live beside the database as plain files so they can be edited
@@ -31,6 +31,7 @@ from . import conversations
 from . import errors
 from . import legacy
 from . import migrations
+from . import refs
 from . import schema
 from . import timestamp
 
@@ -86,8 +87,8 @@ def add_namespace(namespace: str) -> None:
 
 def delete_namespace(namespace: str) -> None:
     """Delete an empty namespace; its orphans and temporary files go too."""
-    if namespace == schema.DEFAULT:
-        raise errors.TaskError(f'namespace {schema.DEFAULT} cannot be deleted')
+    if namespace == refs.DEFAULT:
+        raise errors.TaskError(f'namespace {refs.DEFAULT} cannot be deleted')
     with write() as store:
         _require_namespace(store, namespace)
         query = 'SELECT 1 FROM task WHERE namespace = ? LIMIT 1'
@@ -250,7 +251,7 @@ def select(
     return [_to_task(row, said) for row in rows]
 
 
-def get(store: Store, ref: schema.Ref) -> schema.Task:
+def get(store: Store, ref: refs.Ref) -> schema.Task:
     tasks = select(
         store,
         ' WHERE namespace = :namespace AND id = :id',
@@ -299,7 +300,7 @@ def update(store: Store, task: schema.Task) -> None:
     _store_conversation(store, task)
 
 
-def move(store: Store, task: schema.Task, source: schema.Ref) -> None:
+def move(store: Store, task: schema.Task, source: refs.Ref) -> None:
     """
     Store a task, from `source`, under a new id in its namespace. Its key
     changes in place, so whatever refers to it by key follows it there.
@@ -326,7 +327,7 @@ def _store_conversation(store: Store, task: schema.Task) -> None:
     task.conversation = conversations.store(store.conn, key, task.conversation)
 
 
-def delete(store: Store, ref: schema.Ref) -> None:
+def delete(store: Store, ref: refs.Ref) -> None:
     store.conn.execute(
         'DELETE FROM task WHERE namespace = :namespace AND id = :id',
         {'namespace': ref.namespace, 'id': ref.ident},
@@ -378,7 +379,7 @@ def _to_task(
         | {
             'ident': ident,
             'details': details,
-            'description': _read_description(schema.Ref(namespace, ident)),
+            'description': _read_description(refs.Ref(namespace, ident)),
             'conversation': said.get(
                 (namespace, ident), conversations.Conversation()
             ),
@@ -386,11 +387,11 @@ def _to_task(
     )
 
 
-def _description_path(ref: schema.Ref) -> pathlib.Path:
+def _description_path(ref: refs.Ref) -> pathlib.Path:
     return _directory(ref.namespace) / f'{ref.ident}.txt'
 
 
-def _read_description(ref: schema.Ref) -> str | None:
+def _read_description(ref: refs.Ref) -> str | None:
     try:
         text = _description_path(ref).read_text(encoding='utf-8')
     except FileNotFoundError:

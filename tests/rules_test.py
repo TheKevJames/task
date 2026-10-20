@@ -10,6 +10,7 @@ from task import db
 from task import errors
 from task import ops
 from task import query
+from task import refs
 from task import rules
 from task import schema
 
@@ -57,8 +58,8 @@ def agent(text: str = RULES) -> ops.Writer:
     return ops.Writer(AGENT, rules.parse(tomllib.loads(text))['triage'].check)
 
 
-def ref(value: str) -> schema.Ref:
-    return schema.Ref.parse(value)
+def ref(value: str) -> refs.Ref:
+    return refs.Ref.parse(value)
 
 
 def new(**fields: Unpack[Fields]) -> schema.Task:
