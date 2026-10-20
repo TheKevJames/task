@@ -11,10 +11,15 @@ command made it, so a grant means the same through every interface:
   creates is its own by the create rule instead;
 - change: the fields an agent may change on a task it holds, the tags it may
   move one to, and whether it may mark one as done. Moving a task needs the
-  `namespace` field, and lands it in a namespace the agent may claim in;
+  `namespace` field, and lands it in a namespace the agent may claim in.
+  `blocked_by` and `duplicate_of` grant making and clearing a task's
+  relations, which refer to any task;
 - comment, question: the namespaces and tags of the tasks an agent may
   comment on, and ask the operator questions on, whoever holds them. Saying
   something on a task neither needs nor takes a claim.
+
+What the store does to tasks because of their relations, after an agent's
+change, is not the agent's to be granted (see ADR-0004).
 
 In TOML, one table per agent:
 
@@ -65,6 +70,8 @@ class Field(enum.StrEnum):
     next = 'next'
     interval = 'interval'
     shift = 'shift'
+    blocked_by = 'blocked_by'
+    duplicate_of = 'duplicate_of'
 
 
 # The task attributes holding each field; namespaces and tags are scoped
@@ -77,7 +84,11 @@ ATTRIBUTES = {
     Field.next: 'next_',
     Field.interval: 'interval',
     Field.shift: 'shift',
+    Field.blocked_by: 'blocked_by',
+    Field.duplicate_of: 'duplicate_of',
 }
+# What a task holds when a field is not set.
+UNSET = (None, False, ())
 
 
 @dataclasses.dataclass(frozen=True)
@@ -113,6 +124,8 @@ class Rules:
 
     def check(self, change: ops.Change) -> None:
         """A guard: refuses whatever these rules do not grant."""
+        if change.verb is ops.Verb.settle:
+            return
         before, after = change.before, change.after
         if after is not None:
             self._check_conversation(before, after)
@@ -141,11 +154,11 @@ class Rules:
                 f'you may not create tasks in {_section(task)}'
             )
         for field in self.create.require:
-            if _value(task, field) is None:
+            if _value(task, field) in (None, ()):
                 raise errors.TaskError(f'a new task needs its {field}')
         allowed = self.create.fields | self.create.require
         for field in ATTRIBUTES.keys() - allowed:
-            if _value(task, field) not in {None, False}:
+            if _value(task, field) not in UNSET:
                 raise errors.TaskError(f'you may not set {field}')
 
     def _check_conversation(

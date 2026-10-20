@@ -32,6 +32,8 @@ from . import errors
 from . import legacy
 from . import migrations
 from . import refs
+from . import relations
+from . import schedule
 from . import schema
 from . import timestamp
 
@@ -248,7 +250,8 @@ def select(
         f'SELECT {", ".join(COLUMNS)} FROM task{clauses}', params
     ).fetchall()
     said = conversations.load(store.conn, clauses, params)
-    return [_to_task(row, said) for row in rows]
+    related = relations.load(store.conn, clauses, params)
+    return [_to_task(row, said, related) for row in rows]
 
 
 def get(store: Store, ref: refs.Ref) -> schema.Task:
@@ -276,10 +279,12 @@ def insert(store: Store, task: schema.Task) -> None:
     ).fetchone()
     _write_description(task)
     _store_conversation(store, task)
+    _store_relations(store, task)
 
 
 def update(store: Store, task: schema.Task) -> None:
     """Store a changed task, bumping `updated` unless nothing changed."""
+    related = _store_relations(store, task)
     fields = [c for c in WRITABLE if c not in {'namespace', 'id'}]
     assignments = ', '.join(f'{column} = :{column}' for column in fields)
     # SET expressions all see the row as it was before this statement.
@@ -287,13 +292,14 @@ def update(store: Store, task: schema.Task) -> None:
     new = ', '.join(f':{column}' for column in fields)
     (task.updated,) = store.conn.execute(
         f'UPDATE task SET {assignments},'
-        ' updated = CASE WHEN :described OR :conversed'
+        ' updated = CASE WHEN :described OR :conversed OR :related'
         f' OR ({old}) IS NOT ({new}) THEN {NOW} ELSE updated END'
         ' WHERE namespace = :namespace AND id = :id RETURNING updated',
         _to_row(task)
         | {
             'described': _read_description(task.ref) != task.description,
             'conversed': conversations.unstamped(task.conversation),
+            'related': related,
         },
     ).fetchone()
     _write_description(task)
@@ -327,6 +333,15 @@ def _store_conversation(store: Store, task: schema.Task) -> None:
     task.conversation = conversations.store(store.conn, key, task.conversation)
 
 
+def _store_relations(store: Store, task: schema.Task) -> bool:
+    """Store a task's relations; whether any changed."""
+    key = (task.ref.namespace, task.ref.ident)
+    task.blocked_by, task.duplicate_of, changed = relations.store(
+        store.conn, key, task.blocked_by, task.duplicate_of
+    )
+    return changed
+
+
 def delete(store: Store, ref: refs.Ref) -> None:
     store.conn.execute(
         'DELETE FROM task WHERE namespace = :namespace AND id = :id',
@@ -356,6 +371,7 @@ def _to_row(task: schema.Task) -> dict[str, object]:
 def _to_task(
     row: tuple[object, ...],
     said: dict[conversations.Key, conversations.Conversation],
+    related: dict[relations.Key, relations.Relations],
 ) -> schema.Task:
     fields = dict(zip(COLUMNS, row, strict=True))
     namespace = fields['namespace']
@@ -367,13 +383,14 @@ def _to_task(
     shift = fields.pop('shift')
     details = None
     if next_ is not None:
-        details = schema.Details.model_validate(
+        details = schedule.Details.model_validate(
             {
                 'next': next_,
                 'interval': None if interval is None else {'raw': interval},
                 'shift': bool(shift),
             }
         )
+    relation = related.get((namespace, ident), relations.Relations())
     return schema.Task.model_validate(
         fields
         | {
@@ -383,6 +400,10 @@ def _to_task(
             'conversation': said.get(
                 (namespace, ident), conversations.Conversation()
             ),
+            'blocked_by': relation.blocked_by,
+            'duplicate_of': relation.duplicate_of,
+            'blocks': relation.blocks,
+            'duplicates': relation.duplicates,
         }
     )
 

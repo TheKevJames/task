@@ -291,12 +291,16 @@ def test_invalid_filters_are_refused() -> None:
     assert refused('list', '-f', 'bogus=1') == (
         "invalid target: 'bogus'"
         ' (use summary, namespace, tag, claim, link, priority, size, next,'
-        ' questions)'
+        ' questions, blocked)'
     )
     for filter_ in ('questions~open', 'questions=closed', 'questions='):
         assert refused('list', '-f', filter_) == (
             'questions only supports open'
             ' (use questions=open or questions!=open)'
+        )
+    for filter_ in ('blocked~yes', 'blocked=maybe', 'blocked='):
+        assert refused('list', '-f', filter_) == (
+            'blocked only supports yes, no, or any (use eg. blocked=yes)'
         )
     assert refused('due', '-f', 'tag=a,summary') == (
         "invalid filter: 'summary' (use eg. tag=a, tag!=a, tag~a, tag!~a)"

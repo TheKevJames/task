@@ -1,4 +1,3 @@
-import calendar
 import datetime
 import enum
 import re
@@ -12,6 +11,8 @@ from . import actors
 from . import conversations
 from . import errors
 from . import refs
+from . import relations
+from . import schedule
 from . import timestamp
 
 LINK_RE = re.compile(r'\S+')
@@ -36,15 +37,6 @@ class Size(enum.StrEnum):
     large = 'large'
 
 
-class Unit(enum.StrEnum):
-    day = 'd'
-    week = 'w'
-    month = 'm'
-
-
-# The interval CHECK in migrations must agree.
-INTERVAL_RE = re.compile(rf'[1-9][0-9]*[{"".join(Unit)}]')
-
 E = TypeVar('E', bound=enum.StrEnum)
 
 
@@ -66,72 +58,10 @@ def normalize_name(kind: str, value: str) -> str:
     return name
 
 
-class Interval(pydantic.BaseModel, extra='forbid'):
-    raw: str
-
-    @pydantic.field_validator('raw')
-    @classmethod
-    def validate_raw(cls, value: str) -> str:
-        if not INTERVAL_RE.fullmatch(value):
-            raise errors.TaskError(f'invalid interval: {value!r}')
-        return value
-
-    @property
-    def value(self) -> int:
-        return int(self.raw[:-1])
-
-    @property
-    def unit(self) -> Unit:
-        return Unit(self.raw[-1])
-
-    def __str__(self) -> str:
-        if self.value != 1:
-            return f'every {self.value} {self.unit.name}s'
-
-        match self.unit:
-            case Unit.day:
-                return 'daily'
-            case Unit.week:
-                return 'weekly'
-            case Unit.month:
-                return 'monthly'
-
-    def apply(self, value: datetime.date) -> datetime.date:
-        match self.unit:
-            case Unit.day:
-                return value + datetime.timedelta(days=self.value)
-            case Unit.week:
-                return value + datetime.timedelta(weeks=self.value)
-            case Unit.month:
-                tyear, tmonth = divmod(value.month - 1 + self.value, 12)
-                year, month = value.year + tyear, tmonth + 1
-                # Clamping drifts: Jan 31 -> Feb 28 -> Mar 28.
-                day = min(value.day, calendar.monthrange(year, month)[1])
-                return datetime.date(year, month, day)
-
-
-class Details(pydantic.BaseModel, extra='forbid'):
-    interval: Interval | None = None
-    next_: datetime.date = pydantic.Field(..., alias='next')
-    shift: bool = False
-
-    def __str__(self) -> str:
-        result = f'Due: {self.next_}'
-
-        if self.interval:
-            result += f', repeats {self.interval}'
-            if self.shift:
-                result += ' after completion'
-            else:
-                result += ' since last deadline'
-
-        return result
-
-
 class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
     # pylint: disable=too-many-instance-attributes
     summary: str
-    details: Details | None
+    details: schedule.Details | None
     ident: int | None = None
     namespace: str = refs.DEFAULT
     tag: str
@@ -142,9 +72,14 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
     priority: Priority | None = None
     size: Size | None = None
     conversation: conversations.Conversation = conversations.Conversation()
+    blocked_by: tuple[relations.Blocker, ...] = ()
+    duplicate_of: relations.Duplicate | None = None
     # Assigned by the store: see db.
     created: pydantic.AwareDatetime | None = None
     updated: pydantic.AwareDatetime | None = None
+    # Relations other tasks hold on this one; changing them changes nothing.
+    blocks: tuple[relations.Inbound, ...] = ()
+    duplicates: tuple[relations.Inbound, ...] = ()
 
     @pydantic.field_validator('summary')
     @classmethod
@@ -183,6 +118,19 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         return refs.Ref(self.namespace, self.ident)
 
     @property
+    def waits_on(self) -> tuple[relations.Relation, ...]:
+        duplicate = (self.duplicate_of,) if self.duplicate_of else ()
+        return (*self.blocked_by, *duplicate)
+
+    @property
+    def decided(self) -> bool:
+        return not (
+            self.tag == TRIAGE
+            or self.waits_on
+            or self.conversation.open_questions
+        )
+
+    @property
     def section(self) -> str:
         if self.namespace == refs.DEFAULT:
             return self.tag
@@ -194,6 +142,8 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             result += ' +'
         if self.conversation.open_questions:
             result += f' ?{self.conversation.open_questions}'
+        if self.waits_on:
+            result += ' \N{MULTIPLICATION SIGN}'
         if self.priority:
             result += f' !{self.priority}'
         if self.claim:
@@ -226,7 +176,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         new_task = self.model_copy()
         if not new_task.details:
             details = {'next': datetime.date.today()}
-            new_task.details = Details.model_validate(details)
+            new_task.details = schedule.Details.model_validate(details)
         elif self.details:
             if self.details.interval and not self.details.shift:
                 raise errors.TaskError(
@@ -281,13 +231,32 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
     ) -> None:
         if self.details is None:
             seed = next_ or datetime.date.today().isoformat()
-            self.details = Details.model_validate({'next': seed})
+            self.details = schedule.Details.model_validate({'next': seed})
         if next_ is not None:
             self.details.next_ = datetime.date.fromisoformat(next_)
         if interval is not None:
-            self.details.interval = Interval(raw=interval)
+            self.details.interval = schedule.Interval(raw=interval)
         if shift is not None:
             self.details.shift = shift
+
+    def relate(
+        self,
+        actor: actors.Actor,
+        *,
+        blocked_by: Iterable[str] = (),
+        duplicate_of: str | None = None,
+        cleared: Iterable[str] = (),
+    ) -> None:
+        """
+        Change what this task waits on, as `actor`: clear blockers, by ref or
+        url, then add others.
+        """
+        self.blocked_by = relations.unblock(self.blocked_by, cleared)
+        self.blocked_by += relations.block(actor, self.waits_on, blocked_by)
+        if duplicate_of is not None:
+            self.duplicate_of = relations.duplicate(
+                actor, self.waits_on, duplicate_of
+            )
 
     def converse(
         self,
@@ -368,6 +337,18 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             rows.append(('Priority', self.priority))
         if self.size:
             rows.append(('Size', self.size))
+        canonical = self.duplicate_of.canonical if self.duplicate_of else None
+        related: tuple[tuple[str, tuple[object, ...]], ...] = (
+            ('Blocked by', self.blocked_by),
+            ('Duplicate of', (canonical,) if canonical else ()),
+            ('Blocks', self.blocks),
+            ('Duplicates', self.duplicates),
+        )
+        rows.extend(
+            (label, ', '.join(map(str, items)))
+            for label, items in related
+            if items
+        )
         if self.details:
             rows.append(('Due', self._render_due()))
             if self.details.interval:
@@ -408,6 +389,12 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             'size': self.size,
             'description': self.description,
             **self.conversation.to_json(),
+            'blocked_by': [blocker.to_json() for blocker in self.blocked_by],
+            'duplicate_of': (
+                self.duplicate_of.to_json() if self.duplicate_of else None
+            ),
+            'blocks': [inbound.to_json() for inbound in self.blocks],
+            'duplicates': [inbound.to_json() for inbound in self.duplicates],
             'next': self.details.next_.isoformat() if self.details else None,
             'interval': interval.raw if interval else None,
             'shift': bool(self.details and self.details.shift),
@@ -434,6 +421,7 @@ def _check_force(actor: actors.Actor, force: bool) -> None:
 
 class ClearableField(enum.StrEnum):
     description = 'description'
+    duplicate_of = 'duplicate_of'
     interval = 'interval'
     link = 'link'
     next = 'next'
@@ -446,6 +434,7 @@ class ClearableField(enum.StrEnum):
 OPTIONAL_FIELDS = frozenset(
     {
         ClearableField.description,
+        ClearableField.duplicate_of,
         ClearableField.link,
         ClearableField.priority,
         ClearableField.size,

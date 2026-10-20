@@ -23,7 +23,7 @@ _Avoid_: label, status
 
 **Triage**:
 The tag of tasks not yet sorted under any other; a new task's tag unless it
-is given one.
+is given one, and an unblocked task's.
 _Avoid_: inbox, backlog
 
 ### Scheduling
@@ -112,3 +112,45 @@ _Avoid_: reply, response
 **Open question**:
 A question with no answer yet.
 _Avoid_: pending question, unanswered
+
+### Relations
+
+**Relation**:
+A task's own statement about another task, or about something outside the
+task list; it belongs to the task it starts from, never to its target.
+_Avoid_: link, dependency, association
+
+**Blocker**:
+A relation making a task wait on something: another task's current
+occurrence being marked as done, another task being decided, or an external
+condition, which only an actor can say has cleared.
+_Avoid_: dependency, prerequisite
+
+**Cleared**:
+Of a blocker: no longer holding, because what it waits on happened or an
+actor removed it.
+
+**Decided**:
+Of a task: out of triage, not blocked, and with no open questions.
+_Avoid_: resolved, answered
+
+**Blocked task**:
+A task with any blocker not yet cleared.
+_Avoid_: waiting
+
+**Unblock**:
+What happens to a blocked task once its last blocker clears: it returns to
+triage, to be sorted again, unless whoever cleared it sorted it at the same
+time.
+
+**Duplicate**:
+A one-off task for the same work as another, its canonical: blocked on the
+canonical's current occurrence being marked as done, and gone rather than
+unblocked once it is. Tasks sharing only a decision, each with work of its
+own, are not duplicates: one is blocked on the other being decided.
+_Avoid_: copy, sibling
+
+**Canonical**:
+The task its duplicates are for; never itself a duplicate, so marking it as
+one makes its duplicates the new canonical's.
+_Avoid_: original, primary, parent

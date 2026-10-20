@@ -100,4 +100,53 @@ MIGRATIONS = (
         );
     END
     """,
+    # A task's relations: what it waits on, as `relations` describes. Only
+    # uncleared ones are kept, so a task with any is blocked. Deleting a task
+    # which another waits on fails: the store clears what waits on it first.
+    """
+    CREATE TABLE blocker (
+        id INTEGER PRIMARY KEY,
+        namespace TEXT NOT NULL,
+        task INTEGER NOT NULL,
+        kind TEXT NOT NULL
+            CHECK (kind IN ('done', 'decided', 'duplicate', 'external')),
+        target_namespace TEXT,
+        target INTEGER,
+        url TEXT CHECK (
+            url GLOB '[a-z]*://?*'
+            AND url NOT GLOB ('*[ ' || char(9, 10, 13) || ']*')
+        ),
+        condition TEXT CHECK (
+            condition != ''
+            AND trim(condition, ' ' || char(9, 13)) = condition
+            AND instr(condition, char(10)) = 0
+        ),
+        actor TEXT NOT NULL CHECK (
+            actor != '' AND actor NOT GLOB '*[^A-Za-z0-9_./-]*'
+        ),
+        created TEXT NOT NULL
+            DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            CHECK (strftime('%Y-%m-%dT%H:%M:%SZ', created) IS created),
+        FOREIGN KEY (namespace, task) REFERENCES task (namespace, id)
+            ON DELETE CASCADE ON UPDATE CASCADE,
+        FOREIGN KEY (target_namespace, target) REFERENCES task (namespace, id)
+            ON UPDATE CASCADE,
+        CHECK (
+            (kind = 'external')
+            = (url IS NOT NULL AND condition IS NOT NULL)
+        ),
+        CHECK (
+            (kind = 'external')
+            = (target_namespace IS NULL AND target IS NULL)
+        ),
+        CHECK (target_namespace IS NOT namespace OR target IS NOT task),
+        UNIQUE (namespace, task, target_namespace, target),
+        UNIQUE (namespace, task, url)
+    ) STRICT
+    """,
+    'CREATE INDEX blocker_target ON blocker (target_namespace, target)',
+    """
+    CREATE UNIQUE INDEX blocker_one_canonical ON blocker (namespace, task)
+    WHERE kind = 'duplicate'
+    """,
 )
