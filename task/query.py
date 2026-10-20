@@ -27,13 +27,13 @@ class Target(enum.StrEnum):
 
 
 # Filter values are compared lowercased. `fold` is Python's str.lower,
-# registered by db.connect: SQLite's lower() only folds ASCII. Namespaces and
-# tags are stored lowercased.
+# registered by db.connect: SQLite's lower() only folds ASCII. Namespaces,
+# tags, and claims are stored lowercased.
 COLUMNS = {
     Target.summary: 'fold(summary)',
     Target.namespace: 'namespace',
     Target.tag: 'tag',
-    Target.claim: "fold(coalesce(claim, ''))",
+    Target.claim: "coalesce(claim, '')",
     Target.link: "fold(coalesce(link, ''))",
     Target.priority: "coalesce(priority, '')",
     Target.size: "coalesce(size, '')",

@@ -64,10 +64,11 @@ def legacy_namespace(folder: pathlib.Path) -> Callable[..., pathlib.Path]:
         with contextlib.closing(conn):
             conn.execute(LEGACY_SCHEMA)
             conn.execute(f'PRAGMA user_version = {version}')
+            # 8.x allowed capitals in claims.
             conn.executemany(
                 'INSERT INTO task (id, summary, tag, next, interval, claim,'
                 ' created, updated)'
-                " VALUES (?, ?, 'a', '2026-01-01', '1w', 'bot', ?, ?)",
+                " VALUES (?, ?, 'a', '2026-01-01', '1w', 'Bot', ?, ?)",
                 [
                     (i, summary, LEGACY_CREATED, LEGACY_CREATED)
                     for i, summary in tasks

@@ -27,6 +27,10 @@ COLUMNS = (
     'created',
     'updated',
 )
+# 8.x claims may hold capitals.
+SELECTED = ', '.join(
+    'lower(claim)' if column == 'claim' else column for column in COLUMNS
+)
 
 
 def import_(
@@ -61,7 +65,7 @@ def _import(conn: sqlite3.Connection, database: pathlib.Path) -> None:
         sequence = source.execute(
             "SELECT seq FROM sqlite_sequence WHERE name = 'task'"
         ).fetchone()
-        tasks = source.execute(f'SELECT {", ".join(COLUMNS)} FROM task')
+        tasks = source.execute(f'SELECT {SELECTED} FROM task')
         rows = [(namespace, *task) for task in tasks]
 
     conn.execute(

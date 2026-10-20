@@ -6,16 +6,18 @@ from typing import Self
 
 from . import errors
 
-# An actor's name, as its claims record it; the claim CHECK in migrations must
-# agree.
-CLAIM_RE = re.compile(r'[A-Za-z0-9_./-]+')
+# An actor's name, as its claims and stamps record it; the claim and actor
+# CHECKs in migrations must agree.
+CLAIM_RE = re.compile(r'[a-z0-9_./-]+')
 OPERATOR = 'operator'
 
 
-def check_claim(value: str) -> str:
-    if not CLAIM_RE.fullmatch(value):
+def normalize_claim(value: str) -> str:
+    """An actor's name: `Triage/1` -> `triage/1`."""
+    name = value.lower()
+    if not CLAIM_RE.fullmatch(name):
         raise errors.TaskError(f'invalid claim: {value!r}')
-    return value
+    return name
 
 
 @dataclasses.dataclass(frozen=True)
@@ -29,9 +31,10 @@ class Actor:
 
     @classmethod
     def agent(cls, name: str) -> Self:
-        if name == OPERATOR:
+        normalized = normalize_claim(name)
+        if normalized == OPERATOR:
             raise errors.TaskError(f'an agent cannot be named {OPERATOR}')
-        return cls(check_claim(name))
+        return cls(normalized)
 
     @property
     def is_operator(self) -> bool:

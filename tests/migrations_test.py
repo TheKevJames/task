@@ -1,6 +1,7 @@
 import contextlib
 import datetime
 import pathlib
+import re
 import sqlite3
 from collections.abc import Callable
 
@@ -16,6 +17,8 @@ from task import schema
 
 LegacyNamespace = Callable[..., pathlib.Path]
 CREATED = datetime.datetime(2000, 1, 1, tzinfo=datetime.UTC)
+# How many migrations task 9.0.0 shipped.
+SHIPPED_9_0_0 = 11
 
 
 def test_8x_store_is_imported(
@@ -117,8 +120,9 @@ def test_rebuilding_a_table_keeps_what_refers_to_it(
         (sql,) = conn.conn.execute(
             "SELECT sql FROM sqlite_schema WHERE name = 'task'"
         ).fetchone()
+    # SQLite quotes the name of a table it has renamed.
     rebuild = (
-        sql.replace('CREATE TABLE task', 'CREATE TABLE task_new', 1),
+        re.sub(r'^CREATE TABLE "?task"?', 'CREATE TABLE task_new', sql),
         'INSERT INTO task_new SELECT * FROM task',
         'DROP TABLE task',
         'ALTER TABLE task_new RENAME TO task',
@@ -148,6 +152,50 @@ def test_migrations_which_break_foreign_keys_are_refused(
     monkeypatch.setattr(migrations, 'MIGRATIONS', shipped)
     with db.connect() as conn:
         assert db.get(conn, task.ref) == task
+
+
+def schema_objects(store: db.Store) -> list[tuple[str, str]]:
+    objects: list[tuple[str, str]] = store.conn.execute(
+        'SELECT type, name FROM sqlite_schema ORDER BY type, name'
+    ).fetchall()
+    return objects
+
+
+@pytest.mark.usefixtures('folder')
+def test_9_0_0_actor_names_are_lowercased(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shipped = migrations.MIGRATIONS
+    monkeypatch.setattr(migrations, 'MIGRATIONS', shipped[:SHIPPED_9_0_0])
+    with db.write() as store:
+        for sql in (
+            'INSERT INTO task (namespace, id, summary, tag, claim)'
+            " VALUES ('default', 1, 'a', 'a', 'Triage/1')",
+            'INSERT INTO task (namespace, id, summary, tag)'
+            " VALUES ('default', 2, 'b', 'a')",
+            'INSERT INTO entry (namespace, task, kind, actor, body)'
+            " VALUES ('default', 1, 'comment', 'Triage/1', 'c')",
+            'INSERT INTO blocker'
+            ' (namespace, task, kind, target_namespace, target, actor)'
+            " VALUES ('default', 1, 'done', 'default', 2, 'Triage/1')",
+        ):
+            store.conn.execute(sql)
+        before = schema_objects(store)
+
+    monkeypatch.setattr(migrations, 'MIGRATIONS', shipped)
+    with db.connect() as store:
+        names = store.conn.execute(
+            'SELECT claim FROM task WHERE id = 1'
+            ' UNION ALL SELECT actor FROM entry'
+            ' UNION ALL SELECT actor FROM blocker'
+        ).fetchall()
+        after = schema_objects(store)
+        with pytest.raises(sqlite3.IntegrityError):
+            store.conn.execute("UPDATE task SET claim = 'A' WHERE id = 2")
+
+    print(before, after, sep='\n')
+    assert names == [('triage/1',)] * 3
+    assert after == before
 
 
 def test_newer_database_is_refused(folder: pathlib.Path) -> None:

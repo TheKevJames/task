@@ -43,7 +43,7 @@ class Entry(pydantic.BaseModel, extra='forbid', frozen=True):
     @pydantic.field_validator('actor')
     @classmethod
     def validate_actor(cls, value: str) -> str:
-        return actors.check_claim(value)
+        return actors.normalize_claim(value)
 
     @pydantic.field_validator('body')
     @classmethod
