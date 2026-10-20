@@ -16,8 +16,8 @@ change them while holding the write lock but before committing, so a failed
 commit can strand an orphan, which the next write to its namespace removes.
 Ids are never reused, so an orphan cannot attach itself to a different task.
 
-Completing a one-off task deletes it, with its description; recurring tasks
-advance instead. `created` and `updated` belong to the store, never to
+Marking a one-off task as done deletes it, with its description; recurring
+tasks advance instead. `created` and `updated` belong to the store, never to
 callers: every write which changes a task's row or description bumps
 `updated`. Editing a description file by hand does not.
 """

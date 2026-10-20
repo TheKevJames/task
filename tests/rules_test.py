@@ -106,7 +106,7 @@ def set_(**fields: Unpack[Fields]) -> Callable[[ops.Writer], object]:
         (set_(summary='b'), 'you may not change summary'),
         (set_(namespace='default'), 'you may not move tasks to default'),
         (lambda w: w.change(ops.Verb.unset, ref('bakery:1'), _unlinked), None),
-        (lambda w: w.done(ref('bakery:1'), 0), 'not complete bakery:1'),
+        (lambda w: w.done(ref('bakery:1'), 0), 'not mark bakery:1 as done'),
     ],
 )
 def test_rules_grant_only_what_they_name(

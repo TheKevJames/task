@@ -10,7 +10,7 @@ command made it, so a grant means the same through every interface:
 - claim: the namespaces and tags of the tasks an agent may claim; a task it
   creates is its own by the create rule instead;
 - change: the fields an agent may change on a task it holds, the tags it may
-  move one to, and whether it may complete one. Moving a task needs the
+  move one to, and whether it may mark one as done. Moving a task needs the
   `namespace` field, and lands it in a namespace the agent may claim in.
   `description_append` grants adding paragraphs to a description, but not
   changing what it already says.
@@ -108,7 +108,9 @@ class Rules:
             return
         if change.verb is ops.Verb.done:
             if not (self.change and self.change.done):
-                raise schema.TaskError(f'you may not complete {before.ref}')
+                raise schema.TaskError(
+                    f'you may not mark {before.ref} as done'
+                )
         elif after is None:
             raise schema.TaskError(f'you may not delete {before.ref}')
         # Changing a task claims it first, even one the change deletes.

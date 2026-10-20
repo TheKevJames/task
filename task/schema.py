@@ -257,7 +257,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             result += f'\n\t{self.details}'
         return result
 
-    def complete(self, ago: int) -> Self | None:
+    def done(self, ago: int) -> Self | None:
         """The next occurrence if recurring; None, to delete it, if not."""
         if not (self.details and self.details.interval):
             if ago:
@@ -277,7 +277,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
             new_task.details.next_ = next_
         return new_task
 
-    def postpone(self, days: int) -> Self:
+    def delay(self, days: int) -> Self:
         new_task = self.model_copy()
         if not new_task.details:
             details = {'next': datetime.date.today()}
@@ -285,7 +285,7 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
         elif self.details:
             if self.details.interval and not self.details.shift:
                 raise TaskError(
-                    'periodic tasks with shift=false cannot be delayed'
+                    'recurring tasks with fixed recurrence cannot be delayed'
                 )
         else:
             assert False, 'impossible task state'

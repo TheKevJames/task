@@ -231,17 +231,17 @@ def show(ref: Ref, as_json: AsJson = False) -> None:
 def done(
     ref: Ref, ago: Ago = 0, force: Force = False, as_json: AsJson = False
 ) -> None:
-    """Complete a task: delete it, or advance it if it recurs."""
-    task, completed = writer().done(ref, ago, force=force)
-    if completed is None:
+    """Mark a task as done: delete it, or advance it if it recurs."""
+    task, next_occurrence = writer().done(ref, ago, force=force)
+    if next_occurrence is None:
         report(None, as_json, f'deleted task {ref}: {task.summary}')
         return
-    assert completed.details, 'completed recurring task has no details'
+    assert next_occurrence.details, 'recurring task has no details'
     report(
-        completed,
+        next_occurrence,
         as_json,
         f'completed recurring task {ref},'
-        f' next occurrence: {completed.details.next_}',
+        f' next occurrence: {next_occurrence.details.next_}',
     )
 
 
@@ -249,9 +249,9 @@ def done(
 def delay(
     ref: Ref, days: int, force: Force = False, as_json: AsJson = False
 ) -> None:
-    """Postpone a task by the given number of days."""
+    """Delay a task by the given number of days."""
     delayed = writer().change(
-        ops.Verb.delay, ref, lambda task: task.postpone(days), force=force
+        ops.Verb.delay, ref, lambda task: task.delay(days), force=force
     )
     assert delayed.details, 'delayed task has no details'
     report(

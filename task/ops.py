@@ -101,7 +101,7 @@ class Writer:
             before = db.get(store, ref)
             task = before.model_copy(deep=True)
             task.authorize(self.actor, force=force)
-            after = task.complete(ago)
+            after = task.done(ago)
             self.guard(Change(self.actor, Verb.done, before, after, store))
             if after is None:
                 db.delete(store, ref)

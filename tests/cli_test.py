@@ -326,10 +326,10 @@ def test_filter_by_next() -> None:
 
 
 @pytest.mark.usefixtures('folder')
-def test_fixed_schedules_cannot_be_delayed() -> None:
+def test_fixed_recurrences_cannot_be_delayed() -> None:
     run('add', 'a', '--next', '2026-01-01', '--interval', '1w')
     assert refused('1', 'delay', '3') == (
-        'periodic tasks with shift=false cannot be delayed'
+        'recurring tasks with fixed recurrence cannot be delayed'
     )
 
 
