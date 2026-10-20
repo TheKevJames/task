@@ -1,4 +1,4 @@
-"""A section's requirement holds for every agent's writes, but not the store's."""
+"""A section's requirement holds for every agent's writes, not the store's."""
 
 import tempfile
 import tomllib
@@ -100,7 +100,7 @@ def expected_refusal(
     before_tag=st.sampled_from(['build', 'triage']),
     before_has=st.sets(st.sampled_from(REQUIRED)),
     after_tag=st.sampled_from(['build', 'triage']),
-    treatments=st.fixed_dictionaries({f: TREATMENTS for f in REQUIRED}),
+    treatments=st.fixed_dictionaries(dict.fromkeys(REQUIRED, TREATMENTS)),
 )
 def test_agents_enter_only_meeting_it_and_never_take_from_it(
     before_tag: str,
@@ -111,7 +111,8 @@ def test_agents_enter_only_meeting_it_and_never_take_from_it(
     after_has = {
         f
         for f in REQUIRED
-        if treatments[f] == 'set' or (treatments[f] == 'keep' and f in before_has)
+        if treatments[f] == 'set'
+        or (treatments[f] == 'keep' and f in before_has)
     }
     want = expected_refusal(before_tag, before_has, after_tag, after_has)
     print(f'{before_tag} {before_has} -> {after_tag} {after_has}: {want}')
@@ -127,7 +128,9 @@ def test_agents_enter_only_meeting_it_and_never_take_from_it(
             agent().change(ops.Verb.set, REF, write)
             assert stored(REF).tag == after_tag
         else:
-            with pytest.raises(errors.TaskError, match=f'^{want} in bakery > build$'):
+            with pytest.raises(
+                errors.TaskError, match=f'^{want} in bakery > build$'
+            ):
                 agent().change(ops.Verb.set, REF, write)
             assert stored(REF).claim is None
 
@@ -142,7 +145,10 @@ def fixture_bakery(folder: object) -> None:
     ('has', 'error'),
     [
         (set(), 'a new task needs its priority and size in bakery > build'),
-        ({rules.Field.size}, 'a new task needs its priority in bakery > build'),
+        (
+            {rules.Field.size},
+            'a new task needs its priority in bakery > build',
+        ),
         (set(REQUIRED), None),
     ],
 )
