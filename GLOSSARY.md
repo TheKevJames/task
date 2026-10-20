@@ -21,6 +21,10 @@ are addressed by id alone.
 A flat name placing a task in a section of its namespace.
 _Avoid_: label, status
 
+**Section**:
+A namespace and one of its tags, written `bakery > build`.
+_Avoid_: column, board, queue
+
 **Triage**:
 The tag of tasks not yet sorted under any other; a new task's tag unless it
 is given one, and an unblocked task's.
@@ -83,6 +87,11 @@ _Avoid_: bot, restricted actor, claw
 A grant of what an agent may create, claim, or change; whatever no rule
 grants is denied.
 _Avoid_: permission, policy
+
+**Requirement**:
+What a task must have to be in a section, whichever agent puts it there.
+Once the task is in the section, no agent may take it away.
+_Avoid_: gate, precondition, constraint, required field
 
 **Claim**:
 An actor's exclusive hold on a task. An agent claims every task it creates or

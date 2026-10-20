@@ -21,7 +21,15 @@ command made it, so a grant means the same through every interface:
 What the store does to tasks because of their relations, after an agent's
 change, is not the agent's to be granted (see ADR-0004).
 
-In TOML, one table per agent:
+Requirements hold for every agent alike: the fields a task must have to be in
+a section. A change bringing a task into a section, by creating it there or
+moving it there, must give it all of them; a change to a task already there
+may not take away any it has. No agent may be granted creating tasks in a
+section without setting what the section requires. The store's own follow-on
+changes are held to none (see ADR-0004).
+
+In TOML, one table per agent, and requirements under `sections`, by namespace
+and tag:
 
     [triage.create]
     namespaces = ["bakery"]
@@ -45,6 +53,9 @@ In TOML, one table per agent:
     [triage.question]
     namespaces = ["bakery"]
     tags = ["triage"]
+
+    [sections.bakery.build]
+    require = ["priority", "size"]
 """
 
 import dataclasses
@@ -89,6 +100,19 @@ ATTRIBUTES = {
 }
 # What a task holds when a field is not set.
 UNSET = (None, False, ())
+# The fields a section may require: those a task may lack, but for its
+# relations, which the store clears itself.
+REQUIRABLE = frozenset(
+    {
+        Field.description,
+        Field.interval,
+        Field.link,
+        Field.next,
+        Field.priority,
+        Field.size,
+    }
+)
+SECTIONS = 'sections'
 
 
 @dataclasses.dataclass(frozen=True)
@@ -115,17 +139,45 @@ class Change:
 
 
 @dataclasses.dataclass(frozen=True)
+class Requirement:
+    """The fields a task must have to be in a section."""
+
+    namespace: str
+    tag: str
+    fields: frozenset[Field]
+
+    @property
+    def section(self) -> str:
+        return f'{self.namespace} > {self.tag}'
+
+    def holds(self, task: schema.Task) -> bool:
+        return task.namespace == self.namespace and task.tag == self.tag
+
+    def missing(self, task: schema.Task) -> frozenset[Field]:
+        return frozenset(f for f in self.fields if _value(task, f) in UNSET)
+
+
+@dataclasses.dataclass(frozen=True)
 class Rules:
     create: Create | None = None
     claim: Scope | None = None
     change: Change | None = None
     comment: Scope | None = None
     question: Scope | None = None
+    requirements: frozenset[Requirement] = frozenset()
 
     def check(self, change: ops.Change) -> None:
-        """A guard: refuses whatever these rules do not grant."""
+        """
+        A guard: refuses whatever these rules do not grant, and whatever
+        leaves a task short of its section's requirement.
+        """
         if change.verb is ops.Verb.settle:
             return
+        self._check_grants(change)
+        if change.after is not None:
+            self._check_requirement(change.before, change.after)
+
+    def _check_grants(self, change: ops.Change) -> None:
         before, after = change.before, change.after
         if after is not None:
             self._check_conversation(before, after)
@@ -203,9 +255,40 @@ class Rules:
             elif field not in granted:
                 raise errors.TaskError(f'you may not change {field}')
 
+    def _check_requirement(
+        self, before: schema.Task | None, after: schema.Task
+    ) -> None:
+        requirement = next(
+            (r for r in self.requirements if r.holds(after)), None
+        )
+        if requirement is None:
+            return
+        missing = requirement.missing(after)
+        if before is not None and requirement.holds(before):
+            # The operator, under no rules, may have put it there without
+            # them: agents may still work on it.
+            lost = missing - requirement.missing(before)
+            if lost:
+                raise errors.TaskError(
+                    f'{before.ref} keeps its {_listed(lost)}'
+                    f' in {requirement.section}'
+                )
+        elif missing:
+            subject = 'a new task' if before is None else str(before.ref)
+            raise errors.TaskError(
+                f'{subject} needs its {_listed(missing)}'
+                f' in {requirement.section}'
+            )
+
 
 def _section(task: schema.Task) -> str:
     return f'{task.namespace} > {task.tag}'
+
+
+def _listed(fields: frozenset[Field]) -> str:
+    """`a`, `a and b`, `a, b and c`, in the order fields are defined."""
+    names = [field.value for field in Field if field in fields]
+    return ' and '.join(filter(None, [', '.join(names[:-1]), names[-1]]))
 
 
 def _value(task: schema.Task, field: Field) -> object:
@@ -232,8 +315,16 @@ def _changed(before: schema.Task, after: schema.Task) -> list[Field]:
 
 
 def parse(data: Mapping[str, object]) -> dict[str, Rules]:
-    """Each agent's rules, from one table per agent."""
-    return {agent: _rules(agent, table) for agent, table in data.items()}
+    """
+    Each agent's rules, from one table per agent, each held to every
+    section's requirement, from the `sections` table.
+    """
+    requirements = _requirements(data.get(SECTIONS, {}))
+    return {
+        agent: _rules(agent, table, requirements)
+        for agent, table in data.items()
+        if agent != SECTIONS
+    }
 
 
 def load(path: pathlib.Path) -> dict[str, Rules]:
@@ -303,20 +394,62 @@ def _scope(table: _Table) -> Scope:
     return Scope(table.names('namespaces'), table.names('tags'))
 
 
-def _rules(agent: str, data: object) -> Rules:
+def _requirements(data: object) -> frozenset[Requirement]:
+    sections = _Table(data, SECTIONS)
+    found: dict[str, Requirement] = {}
+    for namespace_key in list(sections.data):
+        tags = sections.table(namespace_key)
+        namespace = schema.normalize_name(tags.where, namespace_key)
+        for tag_key in list(tags.data):
+            table = tags.table(tag_key)
+            tag = schema.normalize_name(table.where, tag_key)
+            requirement = Requirement(namespace, tag, table.fields('require'))
+            table.done()
+            if not requirement.fields <= REQUIRABLE:
+                unrequirable = requirement.fields - REQUIRABLE
+                raise errors.TaskError(
+                    f'{table.where}.require: may not require'
+                    f' {_listed(unrequirable)}'
+                )
+            if requirement.section in found:
+                raise errors.TaskError(
+                    f'{table.where}: {requirement.section} is required twice'
+                )
+            found[requirement.section] = requirement
+    return frozenset(found.values())
+
+
+def _check_creatable(
+    agent: str, create: Create, requirements: frozenset[Requirement]
+) -> None:
+    """Refuses a grant to create where the agent cannot meet a requirement."""
+    settable = create.fields | create.require
+    for requirement in requirements:
+        unsettable = requirement.fields - settable
+        if (
+            requirement.namespace in create.scope.namespaces
+            and requirement.tag in create.scope.tags
+            and unsettable
+        ):
+            raise errors.TaskError(
+                f'{agent}.create: {requirement.section} requires'
+                f' {_listed(unsettable)}, which it may not set'
+            )
+
+
+def _rules(
+    agent: str, data: object, requirements: frozenset[Requirement]
+) -> Rules:
     table = _Table(data, agent)
-    rules = Rules()
+    rules = Rules(requirements=requirements)
     if table.has('create'):
         create = table.table('create')
-        rules = dataclasses.replace(
-            rules,
-            create=Create(
-                _scope(create),
-                create.fields('require'),
-                create.fields('fields'),
-            ),
+        create_rule = Create(
+            _scope(create), create.fields('require'), create.fields('fields')
         )
         create.done()
+        _check_creatable(agent, create_rule, requirements)
+        rules = dataclasses.replace(rules, create=create_rule)
     for key in ('claim', 'comment', 'question'):
         if table.has(key):
             scope = table.table(key)
