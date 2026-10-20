@@ -28,4 +28,4 @@ files directly. The operator keeps writing the files directly, under no rules.
   runs it as the operator's CLI would, as that agent: the rules hold for
   every interface the agent has, not just its tools.
 - Rules deny whatever they do not grant. Embedders attach their own checks as
-  hooks, which may only allow or reject a write, never change it.
+  guards, which may only allow or reject a write, never change it.
