@@ -96,5 +96,5 @@ def test_prefixes_are_refused_where_unsupported(
     ('raw', 'data'), [('next^=2026', '2026'), ('next^=20260131', '2026-01-31')]
 )
 def test_next_takes_a_year_month_or_date_prefix(raw: str, data: str) -> None:
-    (filter_,) = query.Filter.parse(raw)
-    assert filter_.data == data
+    filters = list(query.Filter.parse(raw))
+    assert [f.data for f in filters] == [data]
