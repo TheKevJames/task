@@ -42,14 +42,14 @@ CONVERSATIONS = (
 # Small alphabets, so that filters often match, and summaries non-ASCII case.
 NAME = st.sampled_from(['a', 'a-b', 'b', schema.TRIAGE, refs.DEFAULT])
 # Due dates are drawn within a few days of the stopped clock's today, which
-# NEXT_DATE straddles.
+# DUE_DATE straddles.
 DATES = (-3, 5)
 FILTER_VALUE = (
     st.sampled_from(['', 'high', 'small'])
     | NAME
     | st.text('aAbÉé-! ', max_size=4)
 )
-NEXT_DATE = st.just('') | st.dates(
+DUE_DATE = st.just('') | st.dates(
     datetime.date(2026, 1, 11), datetime.date(2026, 1, 21)
 ).map(datetime.date.isoformat)
 FIELDS = [
@@ -69,11 +69,11 @@ FILTER = (
         st.sampled_from(['=', '!=', '~', '!~', '^=', '!^=']),
         FILTER_VALUE | FILTER_VALUE.map(str.upper),
     )
-    | st.tuples(st.just('next'), st.sampled_from(['=', '!=']), NEXT_DATE)
+    | st.tuples(st.just('due'), st.sampled_from(['=', '!=']), DUE_DATE)
     | st.tuples(
-        st.just('next'),
+        st.just('due'),
         st.sampled_from(['^=', '!^=']),
-        NEXT_DATE | st.sampled_from(['2026', '2026-01', '2026-02']),
+        DUE_DATE | st.sampled_from(['2026', '2026-01', '2026-02']),
     )
     | st.tuples(
         st.just('questions'), st.sampled_from(['=', '!=']), st.just('open')
@@ -84,8 +84,8 @@ FILTER = (
 def task(today: datetime.date) -> st.SearchStrategy[api.Task]:
     first, last = (today + datetime.timedelta(days) for days in DATES)
     details = st.none() | st.builds(
-        lambda next_, interval: schedule.Details.model_validate(
-            {'next': next_, 'interval': interval and {'raw': interval}}
+        lambda due, interval: schedule.Details.model_validate(
+            {'due': due, 'interval': interval and {'raw': interval}}
         ),
         st.dates(first, last),
         st.sampled_from([None, '1d', '2w']),
@@ -127,8 +127,8 @@ def location(t: api.Task) -> tuple[str, int | None]:
 
 def reference_match(filter_: tuple[str, str, str], t: api.Task) -> bool:
     field, op, value = filter_
-    if field == 'next':
-        candidate = t.details.next_.isoformat() if t.details else ''
+    if field == 'due':
+        candidate = t.details.due.isoformat() if t.details else ''
     else:
         candidate = str(getattr(t, field, '') or '').lower()
     if field == 'questions':
@@ -152,8 +152,8 @@ def reference_key(order: api.SortOrder, t: api.Task) -> tuple[object, ...]:
             t.ident,
         )
     if order == api.SortOrder.due:
-        next_ = t.details.next_ if t.details else datetime.date.min
-        key: tuple[object, ...] = (t.details is not None, next_)
+        due = t.details.due if t.details else datetime.date.min
+        key: tuple[object, ...] = (t.details is not None, due)
     elif order == api.SortOrder.created:
         assert t.created
         key = (t.created,)
@@ -161,8 +161,8 @@ def reference_key(order: api.SortOrder, t: api.Task) -> tuple[object, ...]:
         assert t.updated
         key = (-t.updated.timestamp(),)
     elif order == api.SortOrder.priority:
-        next_ = t.details.next_ if t.details else datetime.date.max
-        key = (PRIORITY_RANK[t.priority], t.details is None, next_)
+        due = t.details.due if t.details else datetime.date.max
+        key = (PRIORITY_RANK[t.priority], t.details is None, due)
     else:
         key = ()
     return (*key, t.ident, t.namespace)
@@ -203,7 +203,7 @@ def test_list_matches_reference(  # pylint: disable=too-many-arguments
         and (
             due_within is None
             or not t.details
-            or t.details.next_ <= today + datetime.timedelta(due_within)
+            or t.details.due <= today + datetime.timedelta(due_within)
         )
     ]
     expected.sort(key=lambda t: reference_key(order, t))

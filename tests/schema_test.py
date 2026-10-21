@@ -43,12 +43,12 @@ def test_interval_moves_forward(
 def test_marking_a_fixed_recurrence_as_done_moves_past_today(
     interval: schedule.Interval, today: datetime.date, offset: int
 ) -> None:
-    next_ = today + datetime.timedelta(days=offset)
+    due = today + datetime.timedelta(days=offset)
     task = schema.Task(
         summary='a',
         tag='a',
         details=schedule.Details.model_validate(
-            {'next': next_, 'interval': interval}
+            {'due': due, 'interval': interval}
         ),
     )
     noon = datetime.datetime.combine(
@@ -59,7 +59,7 @@ def test_marking_a_fixed_recurrence_as_done_moves_past_today(
 
     assert next_occurrence
     assert next_occurrence.details
-    assert next_occurrence.details.next_ > max(today, next_)
+    assert next_occurrence.details.due > max(today, due)
 
 
 @hypothesis.given(

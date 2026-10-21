@@ -72,9 +72,9 @@ def details(
     dates: st.SearchStrategy[datetime.date],
 ) -> st.SearchStrategy[schedule.Details | None]:
     return st.none() | st.builds(
-        lambda next_, interval, shift: schedule.Details.model_validate(
+        lambda due, interval, shift: schedule.Details.model_validate(
             {
-                'next': next_,
+                'due': due,
                 'interval': interval and {'raw': interval},
                 'shift': shift,
             }
@@ -145,10 +145,10 @@ def test_save_load_roundtrip(tasks: list[schema.Task]) -> None:
         "tag = 'Triage'",
         "tag = 'a/b'",
         "tag = '-a'",
-        "next = '2026-02-30'",
-        "next = '2026-01-01', interval = '0d'",
-        "next = '2026-01-01', interval = '1y'",
-        "next = '2026-01-01', interval = '1x1d'",
+        "due = '2026-02-30'",
+        "due = '2026-01-01', interval = '0d'",
+        "due = '2026-01-01', interval = '1y'",
+        "due = '2026-01-01', interval = '1x1d'",
         'shift = 1',
         "claim = 'a b'",
         "link = 'a b'",

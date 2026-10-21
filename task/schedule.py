@@ -66,11 +66,11 @@ class Interval(pydantic.BaseModel, extra='forbid'):
 
 class Details(pydantic.BaseModel, extra='forbid'):
     interval: Interval | None = None
-    next_: datetime.date = pydantic.Field(..., alias='next')
+    due: datetime.date
     shift: bool = False
 
     def __str__(self) -> str:
-        result = f'Due: {self.next_}'
+        result = f'Due: {self.due}'
 
         if self.interval:
             result += f', repeats {self.interval}'

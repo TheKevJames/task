@@ -8,17 +8,22 @@ Installation
 
 .. code-block:: console
 
-    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@9.4.0'
+    $ uv tool install 'task @ git+https://github.com/TheKevJames/task@10.0.0'
 
 Usage
 -----
 
 Tasks are stored under ``$TASK_FOLDER``, every namespace in one database:
-``tasks.sqlite``. The first run of 9.x imports a store written by 8.x, and the
-first run of 9.4 moves in the description files of earlier 9.x releases, so
-upgrade every device sharing ``$TASK_FOLDER`` before using any of them. Edit
-a description with ``task 3 describe``, and find tasks by theirs with eg.
-``task list -f description~flaky``.
+``tasks.sqlite``. The first run of 9.x imports a store written by 8.x, the
+first run of 9.4 moves in the description files of earlier 9.x releases, and
+the first run of 10.0 renames each task's ``next`` to ``due``, so upgrade every
+device sharing ``$TASK_FOLDER`` before using any of them. Edit a description
+with ``task 3 describe``, and find tasks by theirs with eg. ``task list -f
+description~flaky``.
+
+A task's due date is ``due``: set it with eg. ``task add x --due 2026-01-31
+--interval 1w``, list what is due with ``task due``, and filter on it with eg.
+``-f due^=2026-01``.
 
 .. code-block:: console
 

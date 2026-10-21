@@ -347,7 +347,7 @@ def test_filter_by_open_questions() -> None:
 
 def test_conversations_go_with_their_task(folder: pathlib.Path) -> None:
     run('namespace', 'add', 'b')
-    recurring = ('--next', '2000-01-01', '--interval', '1d')
+    recurring = ('--due', '2000-01-01', '--interval', '1d')
     run('add', 'a', '--comment', 'kept', *recurring)
     run('add', 'b', '--question', 'gone?')
     run('1', 'set', '-n', 'b', '--comment', 'moved')

@@ -13,13 +13,15 @@ from task import errors
 from task import legacy
 from task import migrations
 from task import refs
+from task import schedule
 from task import schema
 
 LegacyNamespace = Callable[..., pathlib.Path]
 CREATED = datetime.datetime(2000, 1, 1, tzinfo=datetime.UTC)
-# How many migrations task 9.0.0 and 9.3.0 shipped.
+# How many migrations task 9.0.0, 9.3.0, and 9.4.0 shipped.
 SHIPPED_9_0_0 = 11
 SHIPPED_9_3_0 = 29
+SHIPPED_9_4_0 = 31
 
 
 def test_8x_store_is_imported(
@@ -234,6 +236,40 @@ def test_9_3_0_description_files_move_into_the_database(
     assert all(t.updated == CREATED for t in tasks)
     remaining = sorted(str(p.relative_to(folder)) for p in folder.rglob('*'))
     assert remaining == ['c', 'c/unexpected', db.DATABASE]
+
+
+@pytest.mark.usefixtures('folder')
+def test_9_4_0_next_is_renamed_due(monkeypatch: pytest.MonkeyPatch) -> None:
+    shipped = migrations.MIGRATIONS
+    monkeypatch.setattr(migrations, 'MIGRATIONS', shipped[:SHIPPED_9_4_0])
+    with db.write() as store:
+        store.conn.execute(
+            'INSERT INTO task (namespace, id, summary, tag, next, interval,'
+            " shift) VALUES ('default', 1, 'a', 'a', '2026-01-31', '1m', 1),"
+            " ('default', 2, 'b', 'a', NULL, NULL, 0)"
+        )
+        before = schema_objects(store)
+
+    monkeypatch.setattr(migrations, 'MIGRATIONS', shipped)
+    with db.connect() as store:
+        tasks = db.select(store, ' ORDER BY id')
+        after = schema_objects(store)
+        # The CHECKs on the column now hold it by its new name.
+        for sql in (
+            "UPDATE task SET due = '2026-02-30' WHERE id = 1",
+            "UPDATE task SET interval = '1d' WHERE id = 2",
+        ):
+            with pytest.raises(sqlite3.IntegrityError):
+                store.conn.execute(sql)
+
+    print(tasks)
+    assert [t.details for t in tasks] == [
+        schedule.Details.model_validate(
+            {'due': '2026-01-31', 'interval': {'raw': '1m'}, 'shift': True}
+        ),
+        None,
+    ]
+    assert after == before
 
 
 def test_newer_database_is_refused(folder: pathlib.Path) -> None:

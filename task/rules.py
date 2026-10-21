@@ -78,7 +78,7 @@ class Field(enum.StrEnum):
     link = 'link'
     priority = 'priority'
     size = 'size'
-    next = 'next'
+    due = 'due'
     interval = 'interval'
     shift = 'shift'
     blocked_by = 'blocked_by'
@@ -92,7 +92,7 @@ ATTRIBUTES = {
     Field.link: 'link',
     Field.priority: 'priority',
     Field.size: 'size',
-    Field.next: 'next_',
+    Field.due: 'due',
     Field.interval: 'interval',
     Field.shift: 'shift',
     Field.blocked_by: 'blocked_by',
@@ -107,7 +107,7 @@ REQUIRABLE = frozenset(
         Field.description,
         Field.interval,
         Field.link,
-        Field.next,
+        Field.due,
         Field.priority,
         Field.size,
     }
@@ -298,7 +298,7 @@ def _value(task: schema.Task, field: Field) -> object:
         return task.tag
     if field is Field.summary:
         return task.summary
-    if field in {Field.next, Field.interval, Field.shift}:
+    if field in {Field.due, Field.interval, Field.shift}:
         details = task.details
         if details is None:
             return None

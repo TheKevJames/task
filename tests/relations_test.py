@@ -249,7 +249,7 @@ def test_decided_means_sorted_unblocked_and_unasked() -> None:
 
 @pytest.mark.usefixtures('folder')
 def test_recurring_targets_clear_with_their_occurrence() -> None:
-    run('add', 'weekly', '--next', '2026-01-01', '--interval', '1w')
+    run('add', 'weekly', '--due', '2026-01-01', '--interval', '1w')
     run('add', 'waiting', '--blocked-by', '1')
     run('add', 'dup', '--duplicate-of', '1')
 
@@ -300,7 +300,7 @@ def test_a_canonical_made_a_duplicate_hands_its_duplicates_on() -> None:
 @pytest.mark.usefixtures('folder')
 def test_duplicates_are_one_off() -> None:
     run('add', 'canonical')
-    run('add', 'weekly', '--next', '2026-01-01', '--interval', '1w')
+    run('add', 'weekly', '--due', '2026-01-01', '--interval', '1w')
     run('add', 'dup', '--duplicate-of', '1')
 
     assert refused('2', 'set', '--duplicate-of', '1') == (

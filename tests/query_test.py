@@ -90,9 +90,9 @@ def test_filters_match_as_python_compares_lowercased(
     [
         ('questions^=open', '^questions only supports open '),
         ('blocked^=yes', '^blocked only supports yes, no, or any '),
-        ('next=2026-01', "^invalid date: '2026-01' "),
-        ('next^=2026-1', "^invalid date: '2026-1' "),
-        ('next^=2026-13', "^invalid date: '2026-13' "),
+        ('due=2026-01', "^invalid date: '2026-01' "),
+        ('due^=2026-1', "^invalid date: '2026-1' "),
+        ('due^=2026-13', "^invalid date: '2026-13' "),
     ],
 )
 def test_prefixes_are_refused_where_unsupported(
@@ -103,8 +103,8 @@ def test_prefixes_are_refused_where_unsupported(
 
 
 @pytest.mark.parametrize(
-    ('raw', 'data'), [('next^=2026', '2026'), ('next^=20260131', '2026-01-31')]
+    ('raw', 'data'), [('due^=2026', '2026'), ('due^=20260131', '2026-01-31')]
 )
-def test_next_takes_a_year_month_or_date_prefix(raw: str, data: str) -> None:
+def test_due_takes_a_year_month_or_date_prefix(raw: str, data: str) -> None:
     filters = list(query.Filter.parse(raw))
     assert [f.data for f in filters] == [data]

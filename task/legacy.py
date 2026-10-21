@@ -19,7 +19,7 @@ COLUMNS = (
     'id',
     'summary',
     'tag',
-    'next',
+    'due',
     'interval',
     'shift',
     'claim',
@@ -29,10 +29,9 @@ COLUMNS = (
     'created',
     'updated',
 )
-# 8.x claims may hold capitals.
-SELECTED = ', '.join(
-    'lower(claim)' if column == 'claim' else column for column in COLUMNS
-)
+# 8.x claims may hold capitals, and due dates were `next`.
+SOURCES = {'claim': 'lower(claim)', 'due': 'next'}
+SELECTED = ', '.join(SOURCES.get(column, column) for column in COLUMNS)
 
 
 def import_(

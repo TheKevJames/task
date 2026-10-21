@@ -38,7 +38,7 @@ WRITABLE = (
     'summary',
     'description',
     'tag',
-    'next',
+    'due',
     'interval',
     'shift',
     'claim',
@@ -333,7 +333,7 @@ def _to_row(task: schema.Task) -> dict[str, object]:
         'summary': task.summary,
         'description': task.description,
         'tag': task.tag,
-        'next': details.next_.isoformat() if details else None,
+        'due': details.due.isoformat() if details else None,
         'interval': interval.raw if interval else None,
         'shift': int(bool(details and details.shift)),
         'claim': task.claim,
@@ -353,14 +353,14 @@ def _to_task(
     ident = fields.pop('id')
     assert isinstance(namespace, str)
     assert isinstance(ident, int)
-    next_ = fields.pop('next')
+    due = fields.pop('due')
     interval = fields.pop('interval')
     shift = fields.pop('shift')
     details = None
-    if next_ is not None:
+    if due is not None:
         details = schedule.Details.model_validate(
             {
-                'next': next_,
+                'due': due,
                 'interval': None if interval is None else {'raw': interval},
                 'shift': bool(shift),
             }

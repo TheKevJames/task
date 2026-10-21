@@ -44,7 +44,7 @@ class Fields(TypedDict, total=False):
     summary: str
     namespace: str
     tag: str
-    next_: str
+    due: str
     description: str
     link: str
     priority: str
@@ -120,7 +120,7 @@ def asking(task: schema.Task) -> schema.Task:
         (lambda w: w.add(new(tag='human', link='l')), 'in bakery > human'),
         (lambda w: w.add(new()), 'a new task needs its link'),
         (lambda w: w.add(new(link='l', size='small')), 'not set size'),
-        (lambda w: w.add(new(link='l', next_='2026-02-01')), 'not set next'),
+        (lambda w: w.add(new(link='l', due='2026-02-01')), 'not set due'),
         (lambda w: w.claim(ref('bakery:1')), None),
         (lambda w: w.claim(ref('bakery:2')), 'claim tasks in bakery > build'),
         (set_(tag='build', priority='high'), None),
