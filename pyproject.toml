@@ -32,8 +32,8 @@ dev = [
     "time-machine==3.6.0",
 ]
 
-[tool.pytest.ini_options]
-addopts = "-n auto"
+[tool.pytest]
+addopts = ["-n", "auto"]
 pythonpath = ["."]
 testpaths = ["tests"]
 
