@@ -9,7 +9,7 @@ authors = [{ name = "Kevin James", email = "KevinJames@thekev.in" }]
 
 dependencies = [
     "pydantic==2.14.3",
-    "typer==0.28.0",
+    "typer==0.29.0",
 ]
 
 [project.urls]
