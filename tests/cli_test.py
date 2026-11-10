@@ -75,6 +75,22 @@ def test_tags_are_normalized() -> None:
 
 
 @pytest.mark.usefixtures('folder')
+def test_invalid_due_date_is_a_clean_error() -> None:
+    for bad in ('garbage', '2026-13-01', ''):
+        assert (
+            refused('add', 'a', '--due', bad)
+            == f'invalid date: {bad!r} (use eg. 2026-01-31)'
+        )
+    run('add', 'b')
+    for bad in ('garbage', '2026-13-01'):
+        assert (
+            refused('1', 'set', '--due', bad)
+            == f'invalid date: {bad!r} (use eg. 2026-01-31)'
+        )
+    assert [t['summary'] for t in listed()] == ['b']
+
+
+@pytest.mark.usefixtures('folder')
 def test_set_namespace_moves_the_task() -> None:
     run('add', 'a')
     assert refused('1', 'set', '-n', 'bakery') == 'no such namespace: bakery'
