@@ -229,11 +229,18 @@ class Task(pydantic.BaseModel, extra='forbid', validate_assignment=True):
     def _schedule(
         self, due: str | None, interval: str | None, shift: bool | None
     ) -> None:
+        if due is not None:
+            try:
+                due_date = datetime.date.fromisoformat(due)
+            except ValueError:
+                raise errors.TaskError(
+                    f'invalid date: {due!r} (use eg. 2026-01-31)'
+                ) from None
         if self.details is None:
             seed = due or datetime.date.today().isoformat()
             self.details = schedule.Details.model_validate({'due': seed})
         if due is not None:
-            self.details.due = datetime.date.fromisoformat(due)
+            self.details.due = due_date
         if interval is not None:
             self.details.interval = schedule.Interval(raw=interval)
         if shift is not None:
